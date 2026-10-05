@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: xtreme-md
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_NUMBER
+        sync: false
+      - key: OWNER_NAME
+        value: Toman
+      - key: OWNER_NUMBERS
+        sync: false
+      - key: SUDO_NUMBERS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: MODE
+        value: public
+      - key: TIME_ZONE
+        value: Africa/Lagos
