@@ -10,6 +10,7 @@
   </style>
   <style>
     label{display:block;text-align:left;margin:20px 3px 8px;color:#dce2f7;font-size:13px;font-weight:750}input{width:100%;padding:15px 16px;border:1px solid #303b68;border-radius:14px;background:#080e21;color:#fff;font-size:17px;outline:none}input:focus{border-color:#7054ff;box-shadow:0 0 0 3px #7054ff22}.hint{text-align:left;font-size:12px;color:#737e9f;margin:7px 3px 0}.status{margin-top:18px}
+    .copy{margin-top:10px;padding:10px;background:#1a2448;box-shadow:none}
   </style>
 </head>
 <body>
@@ -27,7 +28,7 @@
   </main>
   <script>
     const button=document.querySelector('#pair'),status=document.querySelector('#status'),number=document.querySelector('#number');
-    button.onclick=async()=>{const clean=number.value.replace(/\D/g,'');if(!/^\d{8,15}$/.test(clean)){status.textContent='Enter a valid number with country code first.';return}button.disabled=true;status.textContent='Generating code…';try{const response=await fetch('/api/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({number:clean})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Pairing failed');status.innerHTML=`<div><div class="code">${data.code}</div><small>For ${data.number}</small></div>`;button.textContent='Generate another code';}catch(error){status.textContent=error.message;}finally{setTimeout(()=>button.disabled=false,3000)}};
+    button.onclick=async()=>{const clean=number.value.replace(/\D/g,'');if(!/^\d{8,15}$/.test(clean)){status.textContent='Enter a valid number with country code first.';return}button.disabled=true;status.textContent='Opening a fresh WhatsApp connection…';try{const response=await fetch('/api/pair',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({number:clean})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Pairing failed');status.innerHTML=`<div><div class="code">${data.code}</div><small>For ${data.number}</small><button class="copy" id="copy">Copy code</button></div>`;document.querySelector('#copy').onclick=()=>navigator.clipboard.writeText(data.code).then(()=>document.querySelector('#copy').textContent='Copied ✓');button.textContent='Generate another code';}catch(error){status.textContent=error.message;}finally{setTimeout(()=>button.disabled=false,3000)}};
   </script>
 </body>
 </html>
