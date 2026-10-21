@@ -9,7 +9,7 @@ app.get('/health', (_req, res) => res.status(200).send('OK'));
 app.get('/pair', (_req, res) => res.sendFile(require('path').join(__dirname, 'public', 'pair.html')));
 app.post('/api/pair', async (_req, res) => {
   try {
-    const result = await requestWebPairingCode();
+    const result = await requestWebPairingCode(_req.body?.number);
     res.json({ ok: true, ...result });
   } catch (error) {
     const code = error.code === 'RATE_LIMITED' ? 429 : error.code === 'ALREADY_PAIRED' ? 409 : 400;
