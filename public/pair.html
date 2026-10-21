@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#080b18">
+  <title>Xtreme MD Pairing</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at 50% 10%,#24205c 0,#0b1023 35%,#03050b 78%);color:#f5f7ff;font-family:Inter,system-ui,sans-serif;padding:22px}.card{width:min(430px,100%);padding:30px 24px;border:1px solid #293257;border-radius:28px;background:rgba(9,13,28,.87);box-shadow:0 25px 80px #000a,0 0 45px #7749ff1f;text-align:center}.logo{font-size:94px;font-weight:1000;line-height:1;background:linear-gradient(135deg,#13e7ff,#7354ff 52%,#ff31d1);background-clip:text;color:transparent;filter:drop-shadow(0 0 18px #744cff88)}h1{margin:10px 0 5px;font-size:28px;letter-spacing:4px}p{color:#aeb7d2;line-height:1.55}.status{margin:22px 0;padding:15px;border-radius:15px;background:#0e1630;color:#cbd4ef;min-height:54px;display:grid;place-items:center}.code{font-size:31px;font-weight:900;letter-spacing:5px;color:#59efff;word-break:break-all}button{width:100%;border:0;border-radius:15px;padding:16px;font-size:16px;font-weight:800;color:white;background:linear-gradient(100deg,#147eff,#784dff,#da2bd4);box-shadow:0 8px 28px #704eff55}button:disabled{opacity:.55}.steps{text-align:left;margin-top:24px;padding-top:20px;border-top:1px solid #242c49;font-size:14px;color:#aeb7d2}.steps b{color:#f7f8ff}.tiny{font-size:12px;color:#727d9f;margin-top:18px}
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="logo">X</div>
+    <h1>XTREME MD</h1>
+    <p>Connect the configured WhatsApp account securely.</p>
+    <div class="status" id="status">Ready to generate your pairing code.</div>
+    <button id="pair">Generate pairing code</button>
+    <div class="steps"><b>How to connect</b><br>1. Generate the code above.<br>2. Open WhatsApp → Linked devices.<br>3. Tap Link a device.<br>4. Choose Link with phone number instead.<br>5. Enter the displayed code.</div>
+    <div class="tiny">The code expires shortly. Xtreme MD never asks for your OTP.</div>
+  </main>
+  <script>
+    const button=document.querySelector('#pair'),status=document.querySelector('#status');
+    button.onclick=async()=>{button.disabled=true;status.textContent='Generating code…';try{const response=await fetch('/api/pair',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});const data=await response.json();if(!response.ok)throw new Error(data.error||'Pairing failed');status.innerHTML=`<div><div class="code">${data.code}</div><small>For ${data.number}</small></div>`;button.textContent='Generate another code';}catch(error){status.textContent=error.message;}finally{setTimeout(()=>button.disabled=false,3000)}};
+  </script>
+</body>
+</html>
