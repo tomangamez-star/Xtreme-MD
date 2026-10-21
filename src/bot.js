@@ -16,13 +16,29 @@ let reconnecting = false;
 let activeSocket = null;
 let activeState = null;
 let lastPairRequest = 0;
+let suppressReconnectUntil = 0;
 const getStatus = () => status;
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function createFreshPairingSocket() {
+  suppressReconnectUntil = Date.now() + 120000;
+  reconnecting = false;
+  const previous = activeSocket;
+  activeSocket = null;
+  activeState = null;
+  if (previous) {
+    try { previous.end(new Error('Refreshing pairing connection')); } catch {}
+  }
+  const socket = await startBot();
+  await wait(1200);
+  return socket;
+}
 
 async function requestWebPairingCode(requestedNumber) {
   const number = String(requestedNumber || config.botNumber || '').replace(/\D/g, '');
   if (!/^\d{8,15}$/.test(number)) throw new Error('Enter a valid WhatsApp number with country code, without + or spaces.');
-  if (!activeSocket || !activeState) throw new Error('WhatsApp connection is still starting. Try again shortly.');
-  if (activeState.creds.registered) {
+  if (activeState?.creds.registered) {
     const error = new Error('Xtreme MD is already paired.'); error.code = 'ALREADY_PAIRED'; throw error;
   }
   const now = Date.now();
@@ -31,8 +47,18 @@ async function requestWebPairingCode(requestedNumber) {
     const error = new Error(`Please wait ${wait} seconds before requesting another code.`); error.code = 'RATE_LIMITED'; throw error;
   }
   lastPairRequest = now;
-  const raw = await activeSocket.requestPairingCode(number);
-  const code = String(raw).replace(/\s|-/g, '').match(/.{1,4}/g)?.join('-') || raw;
+  let socket = await createFreshPairingSocket();
+  let raw;
+  try {
+    raw = await socket.requestPairingCode(number);
+  } catch (firstError) {
+    console.warn(`[PAIRING] First connection failed, retrying: ${firstError.message}`);
+    await wait(1000);
+    socket = await createFreshPairingSocket();
+    raw = await socket.requestPairingCode(number);
+  }
+  const code = String(raw).replace(/[^a-z0-9]/gi, '').toUpperCase();
+  suppressReconnectUntil = Date.now() + 120000;
   return { code, number: number.replace(/^(\d{3})\d+(\d{4})$/, '$1••••••$2') };
 }
 
@@ -79,6 +105,7 @@ async function startBot() {
       status = 'offline';
       const code = update.lastDisconnect?.error?.output?.statusCode;
       if (code === DisconnectReason.loggedOut) return console.error('[WHATSAPP] Logged out. Clear the stored session and pair again.');
+      if (Date.now() < suppressReconnectUntil) return;
       if (!reconnecting) { reconnecting = true; setTimeout(() => startBot().catch(console.error), 4000); }
     }
   });
