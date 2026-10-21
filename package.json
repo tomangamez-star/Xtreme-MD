@@ -7,7 +7,8 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js && node --check src/bot.js && node --check src/commands.js"
+    "check": "node --check index.js && node --check src/bot.js && node --check src/commands.js && node --check src/telegram-stickers.js && node --check src/group-status.js && node --check src/repeat.js && node --check src/menu.js && node --check src/utils.js",
+    "test": "node --test test/*.test.js"
   },
   "license": "Apache-2.0",
   "dependencies": {

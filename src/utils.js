@@ -1,7 +1,7 @@
 const { jidNormalizedUser, getContentType } = require('@whiskeysockets/baileys');
 const config = require('../config');
 
-const digits = jid => String(jid || '').split('@')[0].replace(/\D/g, '');
+const digits = jid => String(jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
 const isOwner = jid => [...config.ownerNumbers, ...config.sudoNumbers].includes(digits(jid));
 
 function textOf(message) {
@@ -12,9 +12,9 @@ function textOf(message) {
 }
 
 function parseCommand(text) {
-  if (!text || text[0] !== 'X') return null;
-  const match = text.match(/^X([a-z0-9]+)(?:\s+([\s\S]*))?$/i);
-  if (!match || text[0] !== 'X') return null;
+  if (!text || !['X', '/', '.'].includes(text[0])) return null;
+  const match = text.match(/^[X/.]([a-z0-9]+)(?:\s+([\s\S]*))?$/i);
+  if (!match) return null;
   return { command: match[1].toLowerCase(), query: (match[2] || '').trim() };
 }
 

@@ -13,6 +13,7 @@ module.exports = {
   timezone: process.env.TIME_ZONE || 'Africa/Lagos',
   databaseUrl: process.env.DATABASE_URL || '',
   welcomeImage: process.env.WELCOME_IMAGE || require('path').join(__dirname, 'assets', 'welcome.png'),
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
   stickerPack: process.env.STICKER_PACK || 'Xtreme MD',
   stickerAuthor: process.env.STICKER_AUTHOR || 'TomanGamez',
   musicApi: process.env.MUSIC_API || 'https://apis-keith.vercel.app/download/dlmp3?url=',

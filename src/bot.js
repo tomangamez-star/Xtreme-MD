@@ -150,7 +150,7 @@ async function startBot() {
     for (const msg of messages) {
       if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue;
       const started = Date.now();
-      const text = textOf(msg); const sender = msg.key.participant || msg.key.remoteJid;
+      const text = textOf(msg); const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
       if (await handleVV(sock, msg, text)) continue;
       const isGroup = msg.key.remoteJid.endsWith('@g.us');
       let metadata = null, participants = [], admins = [];
@@ -158,7 +158,7 @@ async function startBot() {
       const parsed = parseCommand(text); if (!parsed) continue;
       if (!config.publicMode && !isOwner(sender)) continue;
       const botJid = sock.user.id;
-      const context = { sock, msg, ...parsed, sender, started, isGroup, participants, mentions: msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [], isAdmin: admins.includes(digits(sender)), isBotAdmin: admins.includes(digits(botJid)) };
+      const context = { sock, msg, ...parsed, sender: msg.key.participantAlt || sender, started, isGroup, participants, mentions: msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [], isAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => [sender, msg.key.participant].filter(Boolean).some(s => digits(j) === digits(s)))), isBotAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => [botJid, sock.user.lid].filter(Boolean).some(b => digits(j) === digits(b)))) };
       try { await runCommand(context); } catch (error) { console.error(`[COMMAND ${parsed.command}]`, error.message); await reply(sock,msg,'❌ That command failed. Try again shortly.'); }
     }
   });

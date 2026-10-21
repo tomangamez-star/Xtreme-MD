@@ -1,0 +1,2 @@
+lottie==0.7.2
+CairoSVG==2.7.1
