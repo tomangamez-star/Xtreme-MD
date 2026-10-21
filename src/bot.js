@@ -3,7 +3,7 @@ const path = require('path');
 const P = require('pino');
 const qrcode = require('qrcode-terminal');
 const {
-  default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion,
+  default: makeWASocket, useMultiFileAuthState, fetchLatestWaWebVersion,
   DisconnectReason, Browsers, downloadContentFromMessage, getContentType
 } = require('@whiskeysockets/baileys');
 const config = require('../config');
@@ -30,8 +30,9 @@ async function createFreshPairingSocket() {
   if (previous) {
     try { previous.end(new Error('Refreshing pairing connection')); } catch {}
   }
+  await wait(350);
   const socket = await startBot();
-  await wait(1200);
+  await wait(3000);
   return socket;
 }
 
@@ -92,8 +93,22 @@ async function startBot() {
   await initDb();
   await restoreAuth();
   const { state, saveCreds } = await useMultiFileAuthState(path.join(process.cwd(), 'session'));
-  const { version } = await fetchLatestBaileysVersion();
-  const sock = makeWASocket({ version, auth: state, logger: P({ level: 'silent' }), browser: Browsers.ubuntu('Xtreme MD'), markOnlineOnConnect: false, syncFullHistory: false, generateHighQualityLinkPreview: true });
+  const { version } = await fetchLatestWaWebVersion();
+  console.log(`[WHATSAPP] Using live web version ${version.join('.')}`);
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: P({ level: 'silent' }),
+    browser: Browsers.macOS('Chrome'),
+    printQRInTerminal: false,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: undefined,
+    keepAliveIntervalMs: 30000,
+    qrTimeout: 180000,
+    markOnlineOnConnect: false,
+    syncFullHistory: false,
+    generateHighQualityLinkPreview: true
+  });
   activeSocket = sock;
   activeState = state;
 
@@ -104,6 +119,11 @@ async function startBot() {
     if (update.connection === 'close') {
       status = 'offline';
       const code = update.lastDisconnect?.error?.output?.statusCode;
+      if (code === DisconnectReason.restartRequired) {
+        suppressReconnectUntil = 0;
+        if (!reconnecting) { reconnecting = true; setTimeout(() => startBot().catch(console.error), 1000); }
+        return;
+      }
       if (code === DisconnectReason.loggedOut) return console.error('[WHATSAPP] Logged out. Clear the stored session and pair again.');
       if (Date.now() < suppressReconnectUntil) return;
       if (!reconnecting) { reconnecting = true; setTimeout(() => startBot().catch(console.error), 4000); }
