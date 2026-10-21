@@ -15,9 +15,9 @@ function parseRepeat(query) {
 function createRepeater({ pause = (ms, signal) => delay(ms, undefined, { signal }), owner = isOwner } = {}) {
   const jobs = new Map();
   const say = (ctx, text) => ctx.sock.sendMessage(ctx.msg.key.remoteJid, { text }, { quoted: ctx.msg });
-  const allowed = ctx => owner(ctx.sender) || (ctx.isGroup && ctx.isAdmin);
+  const allowed = ctx => owner(ctx.sender);
   async function handle(ctx) {
-    if (!allowed(ctx)) return say(ctx, 'Group admins or the bot owner only.');
+    if (!allowed(ctx)) return say(ctx, 'Bot owner only.');
     const jid = ctx.msg.key.remoteJid;
     if (['stopspam', 'stoprepeat'].includes(ctx.command)) {
       const job = jobs.get(jid);

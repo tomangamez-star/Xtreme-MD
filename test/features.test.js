@@ -23,7 +23,8 @@ test('prefixes and category menus work through actual command registry', async (
   const c = ctx('group'); c.command = 'menu';
   assert.equal(await runCommand(c), true);
   assert.match(c.sent[0].text, /Xspam/);
-  assert.match(renderMenu('missing'), /Unknown category/);
+  assert.equal(c.sent[0].interactiveButtons[0].name, 'single_select');
+  assert.match(renderMenu('missing'), /MODULE UNKNOWN/);
 });
 
 test('group status gates private chat, requester role and bot role', async () => {
@@ -74,22 +75,22 @@ test('repeat validates counts, pacing, text and command-loop prevention', () => 
   for (const text of ['0 hello', '21 hello', '5 1s hello', '5', '5 /spam 5 loop', '5 Xmenu', '5 121s hello']) assert.throws(() => parseRepeat(text));
 });
 
-test('repeat sends exactly five over ten seconds, stays in same chat and enforces role', async () => {
+test('repeat sends exactly five over ten seconds, stays in same chat and is owner-only', async () => {
   const waits = [];
-  const repeater = createRepeater({ owner: () => false, pause: async ms => { waits.push(ms); } });
+  const repeater = createRepeater({ owner: sender => sender === 'admin', pause: async ms => { waits.push(ms); } });
   const c = ctx('5 enjoy'); c.command = 'spam';
   await repeater.handle(c); await repeater.waitIdle();
   assert.deepEqual(c.sent.map(m => m.text), Array(5).fill('enjoy'));
   assert.ok(c.sent.every(m => m.jid === 'test@g.us'));
   assert.deepEqual(waits, Array(4).fill(2500));
-  const denied = ctx('5 enjoy'); denied.isAdmin = false;
-  await repeater.handle(denied); assert.match(denied.sent[0].text, /admins/);
+  const denied = ctx('5 enjoy'); denied.sender = 'group-admin'; denied.isAdmin = true;
+  await repeater.handle(denied); assert.match(denied.sent[0].text, /owner only/i);
 });
 
 test('repeat cancels pending timer and rejects concurrent job in same chat', async () => {
   let entered;
   const ready = new Promise(r => { entered = r; });
-  const repeater = createRepeater({ owner: () => false, pause: (_, signal) => new Promise((_, reject) => { entered(); signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }); }) });
+  const repeater = createRepeater({ owner: () => true, pause: (_, signal) => new Promise((_, reject) => { entered(); signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }); }) });
   const c = ctx('5 enjoy'); c.command = 'spam';
   await repeater.handle(c); await ready;
   const duplicate = ctx('3 hi'); duplicate.command = 'repeat';
@@ -99,7 +100,7 @@ test('repeat cancels pending timer and rejects concurrent job in same chat', asy
 });
 
 test('repeat stops after send failure and releases job for future requests', async () => {
-  const repeater = createRepeater({ owner: () => false, pause: async () => {} });
+  const repeater = createRepeater({ owner: () => true, pause: async () => {} });
   const c = ctx('5 enjoy'); c.command = 'spam';
   c.sock.sendMessage = async (_, content) => { if (content.text === 'enjoy') throw new Error('offline'); c.sent.push(content); };
   await repeater.handle(c); await repeater.waitIdle();

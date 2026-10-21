@@ -1,5 +1,5 @@
 FROM node:20-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg python3 python3-venv libcairo2 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg python3 python3-venv libcairo2 fontconfig fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/stickers
 ENV PATH="/opt/stickers/bin:$PATH"
 COPY requirements-stickers.txt /tmp/requirements-stickers.txt

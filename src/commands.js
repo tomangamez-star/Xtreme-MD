@@ -13,7 +13,7 @@ const commands = new Map();
 const register = (names, handler) => names.forEach(name => commands.set(name, handler));
 const reply = (sock, msg, text, extra = {}) => sock.sendMessage(msg.key.remoteJid, { text, ...extra }, { quoted: msg });
 
-const { renderMenu } = require('./menu');
+const { renderMenu, sendMenu } = require('./menu');
 const { createGroupStatus } = require('./group-status');
 const { createRepeater } = require('./repeat');
 const postGroupStatus = createGroupStatus();
@@ -25,7 +25,7 @@ register(['spam', 'repeat', 'stopspam', 'stoprepeat'], ctx => repeater.handle(ct
 
 register(['tgpack', 'next', 'cancel'], context => telegramStickers.handle(context));
 
-register(['menu', 'help', 'commands'], async ({ sock, msg, query }) => reply(sock, msg, renderMenu(query)));
+register(['menu', 'help', 'commands'], async ({ sock, msg, query }) => sendMenu(sock, msg, query));
 register(['ping'], async ({ sock, msg, started }) => reply(sock, msg, `⚡ *Xtreme MD*\nLatency: ${Date.now() - started}ms`));
 register(['alive'], async ({ sock, msg }) => reply(sock, msg, `✅ *Xtreme MD is online*\nMode: ${config.publicMode ? 'Public' : 'Private'}\nPrefix: X`));
 register(['runtime'], async ({ sock, msg }) => { const s = Math.floor(process.uptime()); reply(sock, msg, `⏱️ Runtime: ${Math.floor(s/3600)}h ${Math.floor(s%3600/60)}m ${s%60}s`); });

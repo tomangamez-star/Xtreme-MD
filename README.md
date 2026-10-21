@@ -86,8 +86,33 @@ A media/reply fetch may fail if WhatsApp no longer has the original file.
 with the first send immediately and the last approximately ten seconds later.
 `Xspam 5 20s enjoy` sets the total duration. `Xstopspam` / `Xstoprepeat` cancels
 remaining sends in that chat. A message already in flight may still arrive.
-Only the bot owner or a group admin can start/stop repeats. Repeats run in the
+Only the configured bot owner/sudo numbers can start or stop repeats. Group
+admins cannot use them. Repeats run in the
 current chat only, with one job per chat and ten jobs globally. Limits: 1–20
 messages, 1–120 seconds, at least one second between repeats, 1,000 text
 characters. Text beginning with a bot command is rejected to prevent command loops. Network time can extend the total duration. Jobs reset on restart.
 No new environment variables are needed for status, repeats, or menus.
+
+## Persistent WhatsApp login
+
+Set `DATABASE_URL` to the Supabase Postgres pooler connection string. Every
+Baileys credential update is saved to `xtreme_auth` in a serialized transaction.
+Rotated/deleted key files are removed from the database, preventing stale keys
+from returning after a deploy. On a fresh Render instance the session is
+restored before Baileys starts, so the number remains linked across deploys.
+
+If Supabase is unavailable at startup, the bot can run from its local session,
+but it logs a clear warning that a fresh deployment cannot restore that state.
+Do not run two permanent Render services for the same WhatsApp number.
+
+## Dynamic welcome card
+
+`Xwelcome on` generates a 1200×675 XTRΞMΞ card for each new member. It includes
+the member profile picture, group profile picture, number, group name and member
+count. Private/missing profile pictures use branded fallback avatars. The image
+uses the selected glitch/anime/luxury/cyber theme and is followed by a tagged
+welcome caption. The Docker image installs DejaVu fonts for consistent rendering.
+
+`Xmenu` uses the same visual theme and attempts an interactive module selector.
+If WhatsApp rejects interactive buttons for the connected account/version, it
+automatically falls back to the complete text menu.

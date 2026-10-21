@@ -10,6 +10,7 @@ const config = require('../config');
 const { initDb, restoreAuth, backupAuth, getSetting } = require('./db');
 const { textOf, parseCommand, digits, isOwner, quotedMessage } = require('./utils');
 const { runCommand, reply } = require('./commands');
+const { buildWelcomeCard } = require('./welcome-card');
 
 let status = 'starting';
 let reconnecting = false;
@@ -17,6 +18,8 @@ let activeSocket = null;
 let activeState = null;
 let lastPairRequest = 0;
 let suppressReconnectUntil = 0;
+let sessionRestored = false;
+let reconnectTimer = null;
 const getStatus = () => status;
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -91,7 +94,11 @@ async function handleGroupProtections(sock, msg, text, metadata, sender) {
 
 async function startBot() {
   await initDb();
-  await restoreAuth();
+  if (!sessionRestored) {
+    const restored = await restoreAuth();
+    sessionRestored = true;
+    if (!restored.persistent) console.warn('[AUTH] DATABASE_URL is unavailable. Pairing will not survive a fresh Render deploy.');
+  }
   const { state, saveCreds } = await useMultiFileAuthState(path.join(process.cwd(), 'session'));
   const { version } = await fetchLatestWaWebVersion();
   console.log(`[WHATSAPP] Using live web version ${version.join('.')}`);
@@ -112,8 +119,12 @@ async function startBot() {
   activeSocket = sock;
   activeState = state;
 
-  sock.ev.on('creds.update', async () => { await saveCreds(); await backupAuth(); });
+  sock.ev.on('creds.update', async () => {
+    try { await saveCreds(); await backupAuth(); }
+    catch (error) { console.warn(`[AUTH] Credential save failed: ${error.message}`); }
+  });
   sock.ev.on('connection.update', async update => {
+    if (sock !== activeSocket) return;
     if (update.qr) qrcode.generate(update.qr, { small: true });
     if (update.connection === 'open') { status = 'online'; reconnecting = false; console.log('[WHATSAPP] Xtreme MD online'); await backupAuth(); }
     if (update.connection === 'close') {
@@ -121,12 +132,12 @@ async function startBot() {
       const code = update.lastDisconnect?.error?.output?.statusCode;
       if (code === DisconnectReason.restartRequired) {
         suppressReconnectUntil = 0;
-        if (!reconnecting) { reconnecting = true; setTimeout(() => startBot().catch(console.error), 1000); }
+        scheduleReconnect(1000);
         return;
       }
       if (code === DisconnectReason.loggedOut) return console.error('[WHATSAPP] Logged out. Clear the stored session and pair again.');
       if (Date.now() < suppressReconnectUntil) return;
-      if (!reconnecting) { reconnecting = true; setTimeout(() => startBot().catch(console.error), 4000); }
+      scheduleReconnect(4000);
     }
   });
 
@@ -135,11 +146,15 @@ async function startBot() {
     for (const participant of event.participants) {
       const command = event.action === 'add' ? 'welcome' : event.action === 'remove' ? 'goodbye' : null;
       if (!command || await getSetting(`${command}:${event.id}`, 'off') !== 'on') continue;
-      const text = command === 'welcome' ? `⚡ Welcome @${digits(participant)} to *${metadata.subject}*!\nYou just entered the Xtreme side.` : `👋 @${digits(participant)} left *${metadata.subject}*.`;
+      const text = command === 'welcome' ? `⚡ *@${digits(participant)} synchronized successfully.*\n\nWelcome to *${metadata.subject}*.\nYou are member *#${metadata.participants.length}*.\n\n> Read the rules.\n> Respect the circle.\n> Run the chat.` : `👋 @${digits(participant)} left *${metadata.subject}*.`;
       const payload = { text, mentions: [participant] };
-      if (config.welcomeImage && command === 'welcome') {
-        payload.image = /^https?:/i.test(config.welcomeImage) ? { url: config.welcomeImage } : fs.readFileSync(config.welcomeImage);
-        payload.caption = text; delete payload.text;
+      if (command === 'welcome') {
+        try {
+          payload.image = await buildWelcomeCard({ sock, participant, metadata });
+          payload.caption = text; delete payload.text;
+        } catch (error) {
+          console.warn(`[WELCOME] Dynamic card failed, sending text: ${error.message}`);
+        }
       }
       await sock.sendMessage(event.id, payload);
     }
@@ -163,6 +178,20 @@ async function startBot() {
     }
   });
   return sock;
+}
+
+function scheduleReconnect(delayMs) {
+  if (reconnecting || reconnectTimer) return;
+  reconnecting = true;
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    try { await startBot(); }
+    catch (error) {
+      reconnecting = false;
+      console.error('[RECONNECT]', error.message);
+      scheduleReconnect(10000);
+    }
+  }, delayMs);
 }
 
 module.exports = { startBot, getStatus, requestWebPairingCode };

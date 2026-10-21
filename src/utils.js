@@ -8,7 +8,17 @@ function textOf(message) {
   const m = message?.message;
   if (!m) return '';
   const type = getContentType(m);
-  return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption || m[type]?.text || '';
+  const nativeParams = m.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson;
+  let nativeCommand = '';
+  if (nativeParams) {
+    try {
+      const parsed = JSON.parse(nativeParams);
+      nativeCommand = parsed.id || parsed.row_id || parsed.selected_id || '';
+    } catch {}
+  }
+  return m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || m.videoMessage?.caption ||
+    m.buttonsResponseMessage?.selectedButtonId || m.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    nativeCommand || m[type]?.text || '';
 }
 
 function parseCommand(text) {
