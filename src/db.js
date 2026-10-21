@@ -6,9 +6,10 @@ const config = require('../config');
 const sessionDir = path.join(process.cwd(), 'session');
 const localSettings = path.join(process.cwd(), 'data', 'settings.json');
 let pool;
+let databaseDisabled = false;
 
 function getPool() {
-  if (!config.databaseUrl) return null;
+  if (!config.databaseUrl || databaseDisabled) return null;
   if (!pool) pool = new Pool({ connectionString: config.databaseUrl, ssl: { rejectUnauthorized: false } });
   return pool;
 }
@@ -18,9 +19,17 @@ async function initDb() {
   fs.mkdirSync(path.dirname(localSettings), { recursive: true });
   const db = getPool();
   if (!db) return;
-  await db.query(`CREATE TABLE IF NOT EXISTS xtreme_auth (name TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())`);
-  await db.query(`CREATE TABLE IF NOT EXISTS xtreme_kv (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())`);
-  await db.query(`CREATE TABLE IF NOT EXISTS xtreme_music_usage (user_id TEXT NOT NULL, day DATE NOT NULL DEFAULT CURRENT_DATE, count INT NOT NULL DEFAULT 0, PRIMARY KEY(user_id, day))`);
+  try {
+    await db.query(`CREATE TABLE IF NOT EXISTS xtreme_auth (name TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())`);
+    await db.query(`CREATE TABLE IF NOT EXISTS xtreme_kv (key TEXT PRIMARY KEY, value JSONB NOT NULL, updated_at TIMESTAMPTZ DEFAULT NOW())`);
+    await db.query(`CREATE TABLE IF NOT EXISTS xtreme_music_usage (user_id TEXT NOT NULL, day DATE NOT NULL DEFAULT CURRENT_DATE, count INT NOT NULL DEFAULT 0, PRIMARY KEY(user_id, day))`);
+    console.log('[DATABASE] Connected and ready');
+  } catch (error) {
+    databaseDisabled = true;
+    await pool?.end().catch(() => {});
+    pool = null;
+    console.warn(`[DATABASE] Unavailable; continuing without persistence: ${error.message}`);
+  }
 }
 
 async function restoreAuth() {

@@ -18,8 +18,9 @@ let activeState = null;
 let lastPairRequest = 0;
 const getStatus = () => status;
 
-async function requestWebPairingCode() {
-  if (!config.botNumber) throw new Error('BOT_NUMBER is not configured on the server.');
+async function requestWebPairingCode(requestedNumber) {
+  const number = String(requestedNumber || config.botNumber || '').replace(/\D/g, '');
+  if (!/^\d{8,15}$/.test(number)) throw new Error('Enter a valid WhatsApp number with country code, without + or spaces.');
   if (!activeSocket || !activeState) throw new Error('WhatsApp connection is still starting. Try again shortly.');
   if (activeState.creds.registered) {
     const error = new Error('Xtreme MD is already paired.'); error.code = 'ALREADY_PAIRED'; throw error;
@@ -30,9 +31,9 @@ async function requestWebPairingCode() {
     const error = new Error(`Please wait ${wait} seconds before requesting another code.`); error.code = 'RATE_LIMITED'; throw error;
   }
   lastPairRequest = now;
-  const raw = await activeSocket.requestPairingCode(config.botNumber);
+  const raw = await activeSocket.requestPairingCode(number);
   const code = String(raw).replace(/\s|-/g, '').match(/.{1,4}/g)?.join('-') || raw;
-  return { code, number: config.botNumber.replace(/^(\d{3})\d+(\d{4})$/, '$1••••••$2') };
+  return { code, number: number.replace(/^(\d{3})\d+(\d{4})$/, '$1••••••$2') };
 }
 
 async function handleVV(sock, msg, text) {
