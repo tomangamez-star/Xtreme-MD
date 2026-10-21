@@ -19,6 +19,6 @@ module.exports = {
   musicMaxMinutes: Number(process.env.MUSIC_MAX_MINUTES || 10),
   musicMaxMb: Number(process.env.MUSIC_MAX_MB || 20),
   musicDailyLimit: Number(process.env.MUSIC_DAILY_LIMIT || 3),
-  pairingCooldownMs: Number(process.env.PAIRING_COOLDOWN_MS || 60000),
+  pairingCooldownMs: 10000,
   port: Number(process.env.PORT || 3000)
 };
