@@ -13,7 +13,27 @@ const { runCommand, reply } = require('./commands');
 
 let status = 'starting';
 let reconnecting = false;
+let activeSocket = null;
+let activeState = null;
+let lastPairRequest = 0;
 const getStatus = () => status;
+
+async function requestWebPairingCode() {
+  if (!config.botNumber) throw new Error('BOT_NUMBER is not configured on the server.');
+  if (!activeSocket || !activeState) throw new Error('WhatsApp connection is still starting. Try again shortly.');
+  if (activeState.creds.registered) {
+    const error = new Error('Xtreme MD is already paired.'); error.code = 'ALREADY_PAIRED'; throw error;
+  }
+  const now = Date.now();
+  if (now - lastPairRequest < config.pairingCooldownMs) {
+    const wait = Math.ceil((config.pairingCooldownMs - (now - lastPairRequest)) / 1000);
+    const error = new Error(`Please wait ${wait} seconds before requesting another code.`); error.code = 'RATE_LIMITED'; throw error;
+  }
+  lastPairRequest = now;
+  const raw = await activeSocket.requestPairingCode(config.botNumber);
+  const code = String(raw).replace(/\s|-/g, '').match(/.{1,4}/g)?.join('-') || raw;
+  return { code, number: config.botNumber.replace(/^(\d{3})\d+(\d{4})$/, '$1••••••$2') };
+}
 
 async function handleVV(sock, msg, text) {
   if (text.trim().toLowerCase() !== '.vv') return false;
@@ -47,13 +67,8 @@ async function startBot() {
   const { state, saveCreds } = await useMultiFileAuthState(path.join(process.cwd(), 'session'));
   const { version } = await fetchLatestBaileysVersion();
   const sock = makeWASocket({ version, auth: state, logger: P({ level: 'silent' }), browser: Browsers.ubuntu('Xtreme MD'), markOnlineOnConnect: false, syncFullHistory: false, generateHighQualityLinkPreview: true });
-
-  if (!state.creds.registered && config.botNumber) {
-    setTimeout(async () => {
-      const code = await sock.requestPairingCode(config.botNumber);
-      console.log(`\n[PAIR CODE] ${code.match(/.{1,4}/g).join('-')}\n`);
-    }, 2500);
-  }
+  activeSocket = sock;
+  activeState = state;
 
   sock.ev.on('creds.update', async () => { await saveCreds(); await backupAuth(); });
   sock.ev.on('connection.update', async update => {
@@ -102,4 +117,4 @@ async function startBot() {
   return sock;
 }
 
-module.exports = { startBot, getStatus };
+module.exports = { startBot, getStatus, requestWebPairingCode };
