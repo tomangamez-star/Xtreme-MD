@@ -164,17 +164,26 @@ async function startBot() {
     if (type !== 'notify') return;
     for (const msg of messages) {
       if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue;
-      const started = Date.now();
-      const text = textOf(msg); const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
-      if (await handleVV(sock, msg, text)) continue;
-      const isGroup = msg.key.remoteJid.endsWith('@g.us');
-      let metadata = null, participants = [], admins = [];
-      if (isGroup) { metadata = await sock.groupMetadata(msg.key.remoteJid); participants = metadata.participants; admins = participants.filter(p => p.admin).map(p => digits(p.id)); if (await handleGroupProtections(sock,msg,text,metadata,sender)) continue; }
-      const parsed = parseCommand(text); if (!parsed) continue;
-      if (!config.publicMode && !isOwner(sender)) continue;
-      const botJid = sock.user.id;
-      const context = { sock, msg, ...parsed, sender: msg.key.participantAlt || sender, started, isGroup, participants, mentions: msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [], isAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => [sender, msg.key.participant].filter(Boolean).some(s => digits(j) === digits(s)))), isBotAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => [botJid, sock.user.lid].filter(Boolean).some(b => digits(j) === digits(b)))) };
-      try { await runCommand(context); } catch (error) { console.error(`[COMMAND ${parsed.command}]`, error.message); await reply(sock,msg,'❌ That command failed. Try again shortly.'); }
+      try {
+        const started = Date.now();
+        const text = textOf(msg); const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
+        if (await handleVV(sock, msg, text)) continue;
+        const isGroup = msg.key.remoteJid.endsWith('@g.us');
+        let metadata = null, participants = [];
+        if (isGroup) {
+          metadata = await sock.groupMetadata(msg.key.remoteJid);
+          participants = metadata.participants;
+          if (await handleGroupProtections(sock, msg, text, metadata, sender)) continue;
+        }
+        const parsed = parseCommand(text); if (!parsed) continue;
+        if (!config.publicMode && !isOwner(sender)) continue;
+        const botJid = sock.user.id;
+        const context = { sock, msg, ...parsed, sender: msg.key.participantAlt || sender, started, isGroup, participants, mentions: msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [], isAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => [sender, msg.key.participant].filter(Boolean).some(s => digits(j) === digits(s)))), isBotAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => [botJid, sock.user.lid].filter(Boolean).some(b => digits(j) === digits(b)))) };
+        await runCommand(context);
+      } catch (error) {
+        console.error('[MESSAGE]', error.message);
+        await reply(sock, msg, '❌ That command failed. Try again shortly.').catch(() => {});
+      }
     }
   });
   return sock;
