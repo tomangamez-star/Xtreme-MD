@@ -1,5 +1,6 @@
 node_modules/
-.env
+# .env is intentionally tracked with non-secret deployment defaults.
+# Keep DATABASE_URL and every future secret in Render Environment only.
 session/
 data/settings.json
 temp/

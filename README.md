@@ -22,8 +22,9 @@ Video, TikTok, Instagram, APK and GitHub ZIP downloaders are intentionally exclu
 2. Create a Render Blueprint/Web Service using `render.yaml`.
 3. Add the values shown in `.env.example` to Render.
 4. Use your Supabase pooler connection string as `DATABASE_URL`.
-5. Deploy and copy the pairing code from the Render logs.
-6. On WhatsApp, open **Linked devices → Link with phone number instead**, then enter the code.
+5. Deploy, then open `https://YOUR-RENDER-URL.onrender.com/pair`.
+6. Tap **Generate pairing code**.
+7. On WhatsApp, open **Linked devices → Link with phone number instead**, then enter the code.
 
 The database tables are created automatically. Never commit `.env` or the `session` directory.
 
