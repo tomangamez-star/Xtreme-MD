@@ -44,7 +44,14 @@ public class StickerSmokeTest {
             """;
         try {
             try(OutputStream out=new GZIPOutputStream(new FileOutputStream(input))){out.write(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));}
-            byte[] bytes=Converter.animation(input,"tgs");assertTrue(bytes.length<=512000);assertTrue(Converter.isAnimatedWebp(bytes));
+            File cache=Files.createTempDirectory(c.getCacheDir().toPath(),"cache-test-").toFile();
+            byte[] bytes;
+            try{
+                bytes=Converter.animation(input,"tgs",cache);
+                assertArrayEquals(bytes,Converter.animation(input,"tgs",cache));
+                assertEquals(1,cache.listFiles().length);
+            }finally{PackStore.removeTree(cache);}
+            assertTrue(bytes.length<=512000);assertTrue(Converter.isAnimatedWebp(bytes));
             Bitmap image=BitmapFactory.decodeByteArray(bytes,0,bytes.length);assertEquals(512,image.getWidth());assertEquals(512,image.getHeight());image.recycle();
         }finally{input.delete();}
     }

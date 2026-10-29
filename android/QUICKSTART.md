@@ -1,5 +1,9 @@
 # Start here
 
+**Updating from 1.0 to 1.1?** Follow `UPGRADE-1.1.md` instead. The steps below
+describe the original server/app setup. A working 1.0 server does not need
+to be redeployed for the 1.1 speed patch.
+
 1. Install the supplied **Xtreme-Stickers-preview.apk** on an Android 9+ phone.
 2. Extract the **repo patch ZIP** into your Xtreme-MD repository root. It adds an `android` folder, a GitHub Actions workflow, a sticker API and tests. The only change to existing bot code is one new route in `index.js`. It does not include or replace `.env` or sessions.
 3. Commit/upload the patch and redeploy your existing Render service. Keep `TELEGRAM_BOT_TOKEN` in the server environment, never in the Android app.

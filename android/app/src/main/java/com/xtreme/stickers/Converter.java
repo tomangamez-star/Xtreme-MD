@@ -12,6 +12,11 @@ final class Converter {
     private static native boolean frame(long handle, Bitmap bitmap, int time);
     private static native byte[] finish(long handle, int time);
     private static native void abort(long handle);
+    private static native long openTgs(byte[] json);
+    private static native int tgsDuration(long handle);
+    private static native boolean tgsFrame(long scene,long encoder,int time);
+    private static native void closeTgs(long handle);
+    private static final int[][] FAST_PRESETS={{15,60},{10,40},{8,25}};
     static boolean isAnimatedWebp(byte[] bytes) {
         for (int offset=12; offset+8<=bytes.length;) {
             if(bytes[offset]=='A'&&bytes[offset+1]=='N'&&bytes[offset+2]=='I'&&bytes[offset+3]=='M')return true;
@@ -47,16 +52,41 @@ final class Converter {
         } finally { scaled.recycle(); }
     }
     static byte[] animation(File input, String format) throws Exception {
+        if(format.equals("tgs")) {
+            byte[] json;
+            try(InputStream in=new GZIPInputStream(new FileInputStream(input))){json=Net.read(in,2*1024*1024);}
+            long scene=openTgs(json);
+            if(scene!=0) {
+                try {
+                    int duration=Math.min(10000,Math.max(200,tgsDuration(scene)));
+                    for(int[] preset:FAST_PRESETS){
+                        long encoder=begin(preset[1]);
+                        if(encoder==0)throw new IOException("Encoder unavailable");
+                        try{
+                            for(int index=0,time=0;time<duration;time=(++index)*1000/preset[0]){
+                                if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+                                if(!tgsFrame(scene,encoder,time))throw new IOException("Native TGS rendering failed");
+                            }
+                            long owned=encoder;encoder=0;byte[] bytes=finish(owned,duration);
+                            if(bytes!=null)return bytes;
+                        }finally{if(encoder!=0)abort(encoder);}
+                    }
+                    throw new IOException("Animation cannot fit 500 KB; choose a simpler clip");
+                }finally{closeTgs(scene);}
+            }
+            // Preserve the previous renderer as a compatibility fallback if
+            // the native engine cannot parse an otherwise valid TGS file.
+        }
         try (Frames frames = source(input, format)) {
             int duration = Math.min(10000, Math.max(200, frames.duration()));
-            for (int[] preset : new int[][]{{20,75},{15,55},{10,35},{8,20}}) {
+            for (int[] preset : FAST_PRESETS) {
                 if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
                 long handle = begin(preset[1]);
                 if (handle == 0) throw new IOException("Encoder unavailable");
                 Bitmap bitmap = Bitmap.createBitmap(512,512,Bitmap.Config.ARGB_8888);
                 Canvas canvas = new Canvas(bitmap);
                 try {
-                    for (int time = 0; time < duration; time += 1000 / preset[0]) {
+                    for (int index=0,time=0;time<duration;time=(++index)*1000/preset[0]) {
                         if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
                         bitmap.eraseColor(Color.TRANSPARENT); frames.draw(canvas, time);
                         if (!frame(handle, bitmap, time)) throw new IOException("Animation encoding failed");
@@ -68,6 +98,27 @@ final class Converter {
             }
             throw new IOException("Animation cannot fit 500 KB; choose a simpler or shorter clip");
         }
+    }
+    static byte[] animation(File input,String format,File cacheDir)throws Exception{
+        cacheDir.mkdirs();
+        java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
+        digest.update(("fast-v2:"+format+":").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        try(InputStream in=new FileInputStream(input)){
+            byte[] buffer=new byte[8192];int n;
+            while((n=in.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();digest.update(buffer,0,n);}
+        }
+        StringBuilder key=new StringBuilder();for(byte b:digest.digest())key.append(String.format(java.util.Locale.ROOT,"%02x",b&255));
+        File cached=new File(cacheDir,key+".webp");
+        if(cached.isFile()&&cached.length()>12&&cached.length()<=512000){cached.setLastModified(System.currentTimeMillis());return java.nio.file.Files.readAllBytes(cached.toPath());}
+        byte[] bytes=animation(input,format);
+        // Cache failure must not lose a successfully converted sticker.
+        try{
+            File temp=File.createTempFile("writing-",".tmp",cacheDir);
+            try{java.nio.file.Files.write(temp.toPath(),bytes);if(!temp.renameTo(cached))temp.delete();}finally{temp.delete();}
+            File[] entries=cacheDir.listFiles();
+            if(entries!=null){java.util.Arrays.sort(entries,java.util.Comparator.comparingLong(File::lastModified));long total=0;for(File f:entries)total+=f.length();for(File f:entries){if(total<=64L*1024*1024)break;long size=f.length();if(f.delete())total-=size;}}
+        }catch(IOException ignored){}
+        return bytes;
     }
     private static Frames source(File file, String format) throws Exception {
         if (format.equals("tgs")) {

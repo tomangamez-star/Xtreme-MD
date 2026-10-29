@@ -1,12 +1,15 @@
 # Xtreme Stickers — Android
 
+Version 1.1 uses the native fast engine. See `UPGRADE-1.1.md` for the
+new signing key, installation steps, speed/quality tradeoff and validation.
+
 A standalone native Android app in the Xtreme MD repository. It does not pair with WhatsApp, use the bot session, or send individual stickers into chats. Android 9+ is required.
 
 ## Included
 
 - Dark cyan / violet studio, connection badge, local pack vault and animated previews.
 - Import public `https://t.me/addstickers/NAME` links through the existing server.
-- Local TGS (Lottie), GIF and video conversion to animated WebP using libwebp JNI. The device must support decoding the source video codec; some phones cannot decode transparent VP9 correctly. Conversion failures are shown, not silently replaced with static stickers.
+- Local TGS (native ThorVG with Android Lottie parse fallback), GIF and video conversion to animated WebP using libwebp JNI. The device must support decoding the source video codec; some phones cannot decode transparent VP9 correctly. Conversion failures are shown, not silently replaced with static stickers.
 - Photo-to-static-sticker conversion. Photos are fitted on transparent padding; no crop editor, background removal or text overlay yet. Animated WebP files selected from the gallery currently import as static images; use GIF or video for local animated creation.
 - Review/select stickers, set pack name/author, separate animated/static packs, partition into 3–30 stickers each, preview saved packs, edit labels, choose a tray icon from a sticker, and delete local packs.
 - Official WhatsApp / WhatsApp Business pack-add intent with user confirmation.
@@ -61,4 +64,4 @@ Run Node tests, Android lint/unit tests and a device smoke test: static Telegram
 
 ## Dependencies
 
-Lottie Android is Apache-2.0; libwebp is BSD-licensed. Their licenses are included with this source distribution under `app/src/main/assets/licenses/`. WhatsApp's public sticker-provider protocol is implemented independently. Xtreme Stickers is not affiliated with WhatsApp or Telegram.
+Lottie Android is Apache-2.0; libwebp is BSD-licensed; ThorVG and RapidJSON use MIT licenses. Their licenses are included with this source distribution under `app/src/main/assets/licenses/`. WhatsApp's public sticker-provider protocol is implemented independently. Xtreme Stickers is not affiliated with WhatsApp or Telegram.

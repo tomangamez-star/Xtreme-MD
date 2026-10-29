@@ -26,6 +26,11 @@ jobs:
       - name: Test and build preview
         working-directory: android
         run: gradle --no-daemon testDebugUnitTest lintDebug assembleDebug
+      - name: Native engine smoke test
+        run: |
+          cmake -S android/native-tests -B "$RUNNER_TEMP/xtreme-native-tests" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/xtreme-native-tests" --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/xtreme-native-tests" --output-on-failure
       - uses: actions/upload-artifact@v4
         with:
           name: Xtreme-Stickers-preview-APK
