@@ -4,6 +4,7 @@ const { startBot, getStatus, requestWebPairingCode } = require('./src/bot');
 
 const app = express();
 app.use(express.json({ limit: '10kb' }));
+app.use('/api/stickers', require('./src/sticker-api').createStickerApi());
 app.get('/', (_req, res) => res.redirect('/pair'));
 app.get('/health', (_req, res) => res.status(200).send('OK'));
 app.get('/pair', (_req, res) => res.sendFile(require('path').join(__dirname, 'public', 'pair.html')));
