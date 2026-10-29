@@ -1,7 +1,9 @@
 # Xtreme Stickers — Android
 
-Version 1.1 uses the native fast engine. See `UPGRADE-1.1.md` for the
-new signing key, installation steps, speed/quality tradeoff and validation.
+**Version 1.2:** see `UPGRADE-1.2.md` first. Telegram video import now uses
+the server batch engine, drafts are recoverable, and mixed groups no longer
+block each other. Deploy the server patch before installing the APK update.
+The v1.1 signing key is reused: update in place, do not uninstall.
 
 A standalone native Android app in the Xtreme MD repository. It does not pair with WhatsApp, use the bot session, or send individual stickers into chats. Android 9+ is required.
 

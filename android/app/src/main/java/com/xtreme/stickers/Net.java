@@ -4,6 +4,31 @@ import java.net.*;
 import org.json.*;
 
 final class Net {
+    static JSONObject post(String base,String path,JSONObject body)throws Exception{
+        HttpURLConnection c=(HttpURLConnection)new URL(base(base)+"/api/stickers"+path).openConnection();
+        c.setRequestMethod("POST");c.setDoOutput(true);c.setConnectTimeout(20000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(false);c.setRequestProperty("Content-Type","application/json");
+        byte[] bytes=body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);c.setFixedLengthStreamingMode(bytes.length);
+        try{
+            try(OutputStream out=c.getOutputStream()){out.write(bytes);}
+            int code=c.getResponseCode();
+            if(code==404)throw new IOException("Deploy the v1.2 server patch on Render first. This server has no video batch engine yet.");
+            if(code!=200&&code!=202){String message="Server returned "+code;try(InputStream in=c.getErrorStream()){if(in!=null)message=new JSONObject(new String(read(in,8192),java.nio.charset.StandardCharsets.UTF_8)).optString("error",message);}throw new IOException(message);}
+            try(InputStream in=c.getInputStream()){return new JSONObject(new String(read(in,65536),java.nio.charset.StandardCharsets.UTF_8));}
+        }finally{c.disconnect();}
+    }
+    static void download(String base,String path,File file,int limit)throws Exception{
+        HttpURLConnection c=(HttpURLConnection)new URL(base(base)+"/api/stickers"+path).openConnection();
+        c.setConnectTimeout(20000);c.setReadTimeout(60000);c.setInstanceFollowRedirects(false);
+        boolean complete=false;
+        try{
+            if(c.getResponseCode()!=200)throw new IOException("Batch download unavailable. Your draft is kept; retry Resume server job.");
+            try(InputStream in=c.getInputStream();OutputStream out=new FileOutputStream(file)){
+                byte[] buffer=new byte[8192];int n,total=0;
+                while((n=in.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();total+=n;if(total>limit)throw new IOException("Batch download exceeds its size limit");out.write(buffer,0,n);}
+            }
+            complete=true;
+        }finally{c.disconnect();if(!complete)file.delete();}
+    }
     static String base(String value) throws Exception {
         URI uri = new URI(value.trim());
         if (!"https".equals(uri.getScheme()) || uri.getHost() == null || uri.getUserInfo() != null || uri.getQuery() != null || uri.getFragment() != null || !(uri.getPath().isEmpty() || uri.getPath().equals("/"))) throw new IOException("Enter the HTTPS server origin, without /pair or a path");

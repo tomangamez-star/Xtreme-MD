@@ -25,14 +25,16 @@ public final class MainActivity extends Activity {
     private Future<?> job;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private String status="Not configured", detail="Add your server address in Settings.", page="Studio";
-    private boolean busy=false, checking=false;
+    private boolean busy=false, checking=false, appendMedia=false;
+    private String jobId="",jobBase="",draftNotice="";
+    private JSONArray jobIndices=new JSONArray();
     private File draftDir;
     private final ArrayList<File> draftFiles=new ArrayList<>();
     private final ArrayList<Boolean> draftAnimated=new ArrayList<>();
     private final HashSet<Integer> selected=new HashSet<>();
     private String draftName="My Xtreme pack", draftAuthor="Xtreme";
     private final Runnable heartbeat=new Runnable(){public void run(){checkServer();handler.postDelayed(this,60000);}};
-    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(BG);render();}
+    @Override public void onCreate(Bundle state){super.onCreate(state);getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(BG);restoreDraft();render();}
     @Override protected void onResume(){super.onResume();handler.removeCallbacks(heartbeat);handler.post(heartbeat);}
     @Override protected void onPause(){super.onPause();handler.removeCallbacks(heartbeat);}
     @Override protected void onDestroy(){handler.removeCallbacksAndMessages(null);worker.shutdownNow();ping.shutdownNow();super.onDestroy();}
@@ -66,9 +68,9 @@ public final class MainActivity extends Activity {
     private void home(){
         heading("YOUR EXPRESSION. UPGRADED.","Small stickers.\nXtreme energy.","Bring your favourite reactions with you.");
         LinearLayout hero=card();hero.setPadding(0,0,0,dp(20));hero.addView(new Hero(this),new LinearLayout.LayoutParams(-1,dp(210)));
-        LinearLayout inner=column();inner.setPadding(dp(20),0,dp(20),0);inner.addView(label("TELEGRAM  →  WHATSAPP"));gap(inner,10);inner.addView(text("One link. A whole pack.",23,WHITE,true));gap(inner,8);inner.addView(text("Static or animated. Your name, your labels.\nConverted privately on your phone.",14,MUTED,false));gap(inner,18);inner.addView(button("↗  Import a Telegram pack",true,this::importDialog));hero.addView(inner);body.addView(hero);gap(body,22);
+        LinearLayout inner=column();inner.setPadding(dp(20),0,dp(20),0);inner.addView(label("TELEGRAM  →  WHATSAPP"));gap(inner,10);inner.addView(text("One link. A whole pack.",23,WHITE,true));gap(inner,8);inner.addView(text("Static or animated. Your name, your labels.\nVideos prepared by your Xtreme server.",14,MUTED,false));gap(inner,18);inner.addView(button("↗  Import a Telegram pack",true,this::importDialog));hero.addView(inner);body.addView(hero);gap(body,22);
         LinearLayout actions=row();LinearLayout local=card();local.addView(text("＋",27,PURPLE,true));gap(local,12);local.addView(text("Make it yours",16,WHITE,true));gap(local,6);local.addView(text("Photos, GIFs & clips",12,MUTED,false));click(local,()->show("Create"));actions.addView(local,new LinearLayout.LayoutParams(0,dp(145),1));View spacer=new View(this);actions.addView(spacer,new LinearLayout.LayoutParams(dp(12),1));LinearLayout saved=card();saved.addView(text(String.format(Locale.US,"%02d",PackStore.all(this).size()),27,MINT,true));gap(saved,12);saved.addView(text("Your collection",16,WHITE,true));gap(saved,6);saved.addView(text("Always ready offline",12,MUTED,false));click(saved,()->show("Packs"));actions.addView(saved,new LinearLayout.LayoutParams(0,dp(145),1));body.addView(actions);gap(body,24);body.addView(label("NO BOT PAIRING. NO STICKER SPAM."));
-        if(!draftFiles.isEmpty()){gap(body,18);body.addView(button("Continue unsaved pack →",false,()->show("Review")));}
+        if(!draftFiles.isEmpty()||!jobId.isEmpty()){gap(body,18);body.addView(button("Continue unsaved pack →",false,()->show("Review")));}
     }
     private void createScreen(){heading("THE CREATOR LAB","Made by you.","Turn photos, GIFs and short videos into a pack. Everything stays on this device.");
         LinearLayout c=card();c.addView(text("＋",56,PURPLE,true));gap(c,16);c.addView(text("Start with your camera roll",22,WHITE,true));gap(c,10);c.addView(text("Select 3 or more photos, or 3 or more GIFs / videos. Animations use the first 10 seconds. Static and animated stickers stay in separate packs.",15,MUTED,false));gap(c,22);c.addView(button("Choose photos & videos",true,()->confirmDraft(this::pickMedia)));body.addView(c);gap(body,18);body.addView(text("Images are fitted inside a transparent square. Background removal and manual cropping are not included in this first version.",13,MUTED,false));}
@@ -77,23 +79,48 @@ public final class MainActivity extends Activity {
         try {Uri u=Uri.parse(url.getText().toString().trim());if(!"https".equals(u.getScheme())||!("t.me".equals(u.getHost())||"telegram.me".equals(u.getHost()))||u.getUserInfo()!=null||u.getPort()!=-1||u.getQuery()!=null||u.getFragment()!=null||!u.getPath().matches("/addstickers/[A-Za-z0-9_]{1,64}/?"))throw new IOException("Use a public https://t.me/addstickers/PackName link");Net.base(server());startImport(u.getPathSegments().get(1));}catch(Exception e){error(e.getMessage());}
     }).setNegativeButton("Cancel",null).show();});}
     private LinearLayout dialogFields(){LinearLayout l=column();l.setPadding(dp(24),dp(16),dp(24),dp(8));return l;}
-    private void confirmDraft(Runnable next){if(draftFiles.isEmpty()){next.run();return;}new AlertDialog.Builder(this).setTitle("Replace unsaved draft?").setMessage("Saved packs are unaffected.").setPositiveButton("Replace draft",(d,w)->{clearDraft();next.run();}).setNegativeButton("Keep draft",null).show();}
-    private void clearDraft(){if(draftDir!=null)PackStore.removeTree(draftDir);draftDir=null;draftFiles.clear();draftAnimated.clear();selected.clear();}
-    private void newDraft()throws IOException{clearDraft();draftDir=Files.createTempDirectory(getCacheDir().toPath(),"draft-").toFile();}
+    private void confirmDraft(Runnable next){if(draftFiles.isEmpty()&&jobId.isEmpty()){next.run();return;}new AlertDialog.Builder(this).setTitle("Replace unsaved draft?").setMessage("Saved packs are unaffected.").setPositiveButton("Replace draft",(d,w)->{clearDraft();next.run();}).setNegativeButton("Keep draft",null).show();}
+    private void clearDraft(){
+        if(draftDir!=null)PackStore.removeTree(draftDir);
+        draftDir=null;draftFiles.clear();draftAnimated.clear();selected.clear();
+        jobId="";jobBase="";jobIndices=new JSONArray();draftNotice="";
+    }
+    private void newDraft()throws Exception{clearDraft();draftDir=DraftStore.create(this);persistDraft();}
+    private void persistDraft()throws Exception{
+        if(draftDir==null)return;DraftStore.State s=new DraftStore.State();s.dir=draftDir;
+        s.files.addAll(draftFiles);s.animated.addAll(draftAnimated);s.selected.addAll(selected);
+        s.name=draftName;s.author=draftAuthor;s.notice=draftNotice;s.jobId=jobId;s.jobBase=jobBase;for(int i=0;i<jobIndices.length();i++)s.indices.add(jobIndices.getInt(i));
+        DraftStore.save(this,s);
+    }
+    private void persistQuietly(){try{persistDraft();}catch(Exception e){toast("Could not checkpoint draft. Keep the app open and save your packs.");}}
+    private void restoreDraft(){
+        try{DraftStore.State s=DraftStore.load(this);if(s==null)return;draftDir=s.dir;draftFiles.addAll(s.files);draftAnimated.addAll(s.animated);selected.addAll(s.selected);
+            draftName=s.name;draftAuthor=s.author;draftNotice=s.notice;jobId=s.jobId;jobBase=s.jobBase;jobIndices=new JSONArray(s.indices);
+        }catch(Exception e){draftNotice="Draft recovery could not finish. Do not clear app data.";}
+    }
+    private int nextIndex(){
+        int max=-1;for(File f:draftFiles)max=Math.max(max,Integer.parseInt(f.getName().replaceAll("[^0-9]","")));
+        for(int i=0;i<jobIndices.length();i++)max=Math.max(max,jobIndices.optInt(i,-1));return max+1;
+    }
+    private void watchLabel(EditText field,boolean name){
+        field.addTextChangedListener(new android.text.TextWatcher(){
+            public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+            public void onTextChanged(CharSequence s,int start,int before,int count){if(name)draftName=s.toString();else draftAuthor=s.toString();persistQuietly();}
+            public void afterTextChanged(android.text.Editable s){}
+        });
+    }
     interface Task{void run()throws Exception;}
-    private void runJob(Task task){busy=true;render();job=worker.submit(()->{try{task.run();ui(()->{busy=false;page=draftFiles.isEmpty()?"Packs":"Review";render();});}catch(Exception e){boolean cancelled=Thread.currentThread().isInterrupted()||e instanceof InterruptedException||e instanceof InterruptedIOException;ui(()->{busy=false;page=draftFiles.isEmpty()?"Studio":"Review";render();error(cancelled?"Cancelled. Any completed stickers are kept in your draft.":(e.getMessage()==null?"Something went wrong. Please retry.":e.getMessage()));});}});}
+    private void runJob(Task task){busy=true;render();job=worker.submit(()->{try{task.run();ui(()->{busy=false;page=draftFiles.isEmpty()&&jobId.isEmpty()?"Packs":"Review";render();});}catch(Exception e){boolean cancelled=Thread.currentThread().isInterrupted()||e instanceof InterruptedException||e instanceof InterruptedIOException;ui(()->{busy=false;page=draftFiles.isEmpty()&&jobId.isEmpty()?"Studio":"Review";render();error(cancelled?"Cancelled. Any completed stickers are kept in your draft.":(e.getMessage()==null?"Something went wrong. Please retry.":e.getMessage()));});}});}
     private void report(String message,int done,int total){ui(()->{if(progressText!=null)progressText.setText(message);if(progress!=null){progress.setIndeterminate(total<=0);if(total>0){progress.setMax(total);progress.setProgress(done);}}});}
     private void busyScreen(){heading("WORKING ON YOUR DEVICE","Making magic.","Keep the app open while your pack is prepared.");body.addView(new Hero(this),new LinearLayout.LayoutParams(-1,dp(220)));gap(body,24);progressText=text("Preparing…",16,WHITE,true);body.addView(progressText);gap(body,20);progress=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);progress.setIndeterminate(true);progress.setProgressTintList(ColorStateList.valueOf(MINT));body.addView(progress,new LinearLayout.LayoutParams(-1,dp(8)));gap(body,24);body.addView(button("Cancel conversion",false,()->{if(job!=null)job.cancel(true);toast("Cancelling…");}));}
     private void addConverted(File source,String format,int index)throws Exception{
         boolean animated=!format.equals("webp")&&!format.equals("image");
         long started=SystemClock.elapsedRealtime();
         report("Converting sticker "+(index+1)+" · native fast engine…",index,0);
-        byte[] bytes=animated?Converter.animation(source,format,new File(getCacheDir(),"converted-v2")):Converter.staticImage(source);
-        animated=Converter.isAnimatedWebp(bytes);
+        byte[] bytes=animated?Converter.animation(source,format,new File(getCacheDir(),"converted-v3")):Converter.staticImage(source);
+        if(animated)WebpInfo.requireAnimation(bytes);
         File out=new File(draftDir,"sticker-"+index+".webp");Files.write(out.toPath(),bytes);
-        // libwebp legitimately collapses identical animation frames to a still.
-        if(!animated&&bytes.length>100*1024)Files.write(out.toPath(),Converter.staticImage(out));
-        draftFiles.add(out);draftAnimated.add(animated);selected.add(draftFiles.size()-1);source.delete();
+        draftFiles.add(out);draftAnimated.add(animated);selected.add(draftFiles.size()-1);persistDraft();source.delete();
         android.util.Log.i("XtremeConvert",format+" sticker="+(index+1)+" ms="+(SystemClock.elapsedRealtime()-started)+" bytes="+out.length());
     }
     private void startImport(String name){
@@ -102,38 +129,134 @@ public final class MainActivity extends Activity {
             JSONObject pack=new JSONObject(new String(Net.get(server(),"/packs/"+name,2*1024*1024),StandardCharsets.UTF_8));
             draftName=pack.getString("title");if(draftName.length()>54)draftName=draftName.substring(0,54);draftAuthor="Xtreme";
             JSONArray list=pack.getJSONArray("stickers");if(list.length()>200)throw new IOException("Pack is too large");
-            ExecutorService downloads=Executors.newSingleThreadExecutor();
-            Future<byte[]> pending=null;
-            try{
-                for(int i=0;i<list.length();i++){
-                    if(Thread.currentThread().isInterrupted())throw new InterruptedException();
-                    if(pending==null){final String ticket=downloadTicket(list.getJSONObject(i));pending=downloads.submit(()->Net.get(server(),"/files/"+ticket,5*1024*1024));}
-                    report("Preparing "+(i+1)+" / "+list.length()+" · overlapping download + conversion",i,list.length());
-                    byte[] bytes;
-                    try{bytes=pending.get();}catch(ExecutionException e){if(e.getCause() instanceof Exception)throw (Exception)e.getCause();throw e;}
-                    pending=null;
-                    // Only one look-ahead file is held in memory, not the whole pack.
-                    if(i+1<list.length()){final String ticket=downloadTicket(list.getJSONObject(i+1));pending=downloads.submit(()->Net.get(server(),"/files/"+ticket,5*1024*1024));}
-                    File source=new File(draftDir,"source");Files.write(source.toPath(),bytes);
-                    addConverted(source,list.getJSONObject(i).getString("format"),i);
-                }
-            }finally{if(pending!=null)pending.cancel(true);downloads.shutdownNow();}
+            persistDraft();
+            JSONArray tickets=new JSONArray();jobIndices=new JSONArray();
+            for(int i=0;i<list.length();i++)if(list.getJSONObject(i).getString("format").equals("webm")){tickets.put(downloadTicket(list.getJSONObject(i)));jobIndices.put(i);}
+            if(tickets.length()>0){
+                report("Starting server video engine…",0,tickets.length());
+                JSONObject job=Net.post(server(),"/jobs",new JSONObject().put("tickets",tickets));
+                jobId=job.getString("id");jobBase=server();persistDraft();completeServerJob();
+            }
+            for(int i=0;i<list.length();i++){
+                if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+                JSONObject item=list.getJSONObject(i);if(item.getString("format").equals("webm"))continue;
+                report("Preparing "+(i+1)+" / "+list.length(),i,list.length());
+                File source=new File(draftDir,"source");
+                Files.write(source.toPath(),Net.get(server(),"/files/"+downloadTicket(item),5*1024*1024));
+                addConverted(source,item.getString("format"),i);
+            }
         });
+    }
+    private void completeServerJob()throws Exception{
+        if(!jobId.matches("[a-f0-9]{48}"))throw new IOException("Invalid server job identifier");
+        String id=jobId,base=jobBase;long deadline=SystemClock.elapsedRealtime()+30*60*1000;
+        JSONObject status;
+        for(;;){
+            if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+            status=new JSONObject(new String(Net.get(base,"/jobs/"+id,65536),StandardCharsets.UTF_8));
+            report("Server converting videos: "+status.optInt("completed")+" / "+status.optInt("total")+" · safe to resume later",status.optInt("completed"),status.optInt("total"));
+            if(status.optString("state").equals("ready"))break;
+            if(SystemClock.elapsedRealtime()>deadline)throw new IOException("Server job is taking longer than expected. Your draft is saved; use Resume server job.");
+            Thread.sleep(2500);
+        }
+        File packet=new File(draftDir,"batch.bin");
+        try{
+            report("Downloading verified animations…",0,0);
+            Net.download(base,"/jobs/"+id+"/download",packet,33*1024*1024);
+            try(DataInputStream in=new DataInputStream(new BufferedInputStream(new FileInputStream(packet)))){
+                if(in.readInt()!=0x58535032)throw new IOException("Invalid server batch");
+                int count=in.readInt();if(count<0||count>jobIndices.length())throw new IOException("Invalid batch count");
+                HashSet<Integer> seen=new HashSet<>();
+                for(int i=0;i<count;i++){
+                    if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+                    int remote=in.readInt(),size=in.readInt();
+                    if(remote<0||remote>=jobIndices.length()||!seen.add(remote)||size<12||size>512000)throw new IOException("Invalid batch record");
+                    byte[] bytes=new byte[size];in.readFully(bytes);WebpInfo.requireAnimation(bytes);
+                    int index=jobIndices.getInt(remote);File output=new File(draftDir,"sticker-"+index+".webp");
+                    if(!draftFiles.contains(output)){Files.write(output.toPath(),bytes);draftFiles.add(output);draftAnimated.add(true);selected.add(draftFiles.size()-1);persistDraft();}
+                    report("Saved animation "+(i+1)+" / "+count,i+1,count);
+                }
+                if(in.read()!=-1)throw new IOException("Unexpected batch data");
+            }
+            JSONArray errors=status.optJSONArray("errors");
+            draftNotice=errors!=null&&errors.length()>0?errors.length()+" video(s) failed validation. Successful animations are saved in this draft; no still substitutes were created.":"All server-converted videos passed animation checks.";
+            jobId="";jobBase="";jobIndices=new JSONArray();persistDraft();
+        }finally{packet.delete();}
     }
     private String downloadTicket(JSONObject item)throws Exception{
         String ticket=item.getString("ticket");if(!ticket.matches("[a-f0-9]{48}"))throw new IOException("Invalid server response");return ticket;
     }
-    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==20){if(result==RESULT_OK)toast("Pack added to WhatsApp");else if(data!=null&&data.getStringExtra("validation_error")!=null)error(data.getStringExtra("validation_error"));return;}if(request!=10||result!=RESULT_OK||data==null)return;ArrayList<Uri> uris=new ArrayList<>();if(data.getClipData()!=null){for(int i=0;i<data.getClipData().getItemCount();i++)uris.add(data.getClipData().getItemAt(i).getUri());}else if(data.getData()!=null)uris.add(data.getData());if(uris.size()>200){error("Choose up to 200 files at a time");return;}runJob(()->{newDraft();draftName="My Xtreme pack";draftAuthor="Xtreme";for(int i=0;i<uris.size();i++){report("Converting "+(i+1)+" / "+uris.size(),i,uris.size());Uri uri=uris.get(i);String mime=getContentResolver().getType(uri);String format=mime!=null&&mime.startsWith("video/")?"video":"image/gif".equals(mime)?"gif":"image";File source=new File(draftDir,"source");try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open media");Files.write(source.toPath(),Net.read(in,30*1024*1024));}addConverted(source,format,i);}});}
-    private void review(){heading("PACK WORKSHOP","A little more you.","Tap to include or exclude stickers. Static and animated selections are saved separately.");EditText name=field(body,"Pack name",draftName),author=field(body,"Author",draftAuthor);body.addView(text(draftFiles.size()+" converted stickers • tap any tile to select",13,MUTED,false));gap(body,16);GridLayout grid=new GridLayout(this);grid.setColumnCount(3);for(int i=0;i<draftFiles.size();i++){final int index=i;LinearLayout tile=column();tile.setPadding(dp(6),dp(6),dp(6),dp(6));tile.setBackground(box(selected.contains(i)?0xFF1D3B3C:PANEL,16));ImageView image=preview(draftFiles.get(i));tile.addView(image,new LinearLayout.LayoutParams(-1,dp(86)));TextView caption=text((draftAnimated.get(i)?"ANIMATED":"STATIC")+"  "+(selected.contains(i)?"✓":"○"),9,selected.contains(i)?MINT:MUTED,true);caption.setGravity(Gravity.CENTER);tile.addView(caption);GridLayout.LayoutParams lp=new GridLayout.LayoutParams();lp.width=0;lp.columnSpec=GridLayout.spec(GridLayout.UNDEFINED,1f);lp.setMargins(dp(3),dp(3),dp(3),dp(3));grid.addView(tile,lp);click(tile,()->{if(!selected.remove(index))selected.add(index);tile.setBackground(box(selected.contains(index)?0xFF1D3B3C:PANEL,16));caption.setText((draftAnimated.get(index)?"ANIMATED":"STATIC")+"  "+(selected.contains(index)?"✓":"○"));});}body.addView(grid);gap(body,20);body.addView(button("Save selected stickers as packs →",true,()->{draftName=name.getText().toString().trim();draftAuthor=author.getText().toString().trim();ArrayList<File> still=new ArrayList<>(),animated=new ArrayList<>();for(int i=0;i<draftFiles.size();i++)if(selected.contains(i))(draftAnimated.get(i)?animated:still).add(draftFiles.get(i));try{PackStore.validateLabels(draftName,draftAuthor);if((still.size()>0&&still.size()<3)||(animated.size()>0&&animated.size()<3)||selected.isEmpty())throw new IOException("Select at least 3 stickers of each included type. You can deselect a smaller group.");}catch(Exception e){error(e.getMessage());return;}runJob(()->{ArrayList<String> created=new ArrayList<>();try{if(!still.isEmpty())created.addAll(PackStore.save(this,still,false,draftName+(animated.isEmpty()?"":" · Static"),draftAuthor));if(!animated.isEmpty())created.addAll(PackStore.save(this,animated,true,draftName+(still.isEmpty()?"":" · Motion"),draftAuthor));}catch(Exception e){for(String id:created)PackStore.removeTree(PackStore.dir(this,id));throw e;}clearDraft();});}));}
+    @Override protected void onActivityResult(int request,int result,Intent data){
+        super.onActivityResult(request,result,data);
+        if(request==20){if(result==RESULT_OK)toast("Pack added to WhatsApp");else if(data!=null&&data.getStringExtra("validation_error")!=null)error(data.getStringExtra("validation_error"));return;}
+        if(request!=10||result!=RESULT_OK||data==null){appendMedia=false;return;}
+        ArrayList<Uri> uris=new ArrayList<>();
+        if(data.getClipData()!=null){for(int i=0;i<data.getClipData().getItemCount();i++)uris.add(data.getClipData().getItemAt(i).getUri());}
+        else if(data.getData()!=null)uris.add(data.getData());
+        if(uris.size()+draftFiles.size()>200){error("Keep drafts to 200 files or fewer");appendMedia=false;return;}
+        final boolean append=appendMedia;appendMedia=false;
+        runJob(()->{
+            if(!append){newDraft();draftName="My Xtreme pack";draftAuthor="Xtreme";}
+            int offset=nextIndex();persistDraft();
+            for(int i=0;i<uris.size();i++){
+                report("Converting "+(i+1)+" / "+uris.size(),i,uris.size());Uri uri=uris.get(i);String mime=getContentResolver().getType(uri);
+                String format=mime!=null&&mime.startsWith("video/")?"video":"image/gif".equals(mime)?"gif":"image";
+                File source=new File(draftDir,"source");
+                try(InputStream in=getContentResolver().openInputStream(uri)){if(in==null)throw new IOException("Cannot open media");Files.write(source.toPath(),Net.read(in,30*1024*1024));}
+                addConverted(source,format,offset+i);
+            }
+        });
+    }
+    private void review(){
+        heading("PACK WORKSHOP","A little more you.","Static and animated selections are split automatically. Smaller groups stay safely in your draft.");
+        if(!draftNotice.isEmpty()){body.addView(text(draftNotice,13,PURPLE,false));gap(body,16);}
+        EditText name=field(body,"Pack name",draftName),author=field(body,"Author",draftAuthor);watchLabel(name,true);watchLabel(author,false);
+        if(!jobId.isEmpty()){body.addView(button("Resume server job →",true,()->runJob(this::completeServerJob)));gap(body,14);}
+        body.addView(button("Add more photos / GIFs / videos",false,()->{appendMedia=true;pickMedia();}));gap(body,16);
+        body.addView(text(draftFiles.size()+" verified / recovered stickers · draft saved automatically",13,MUTED,false));gap(body,16);
+        GridLayout grid=new GridLayout(this);grid.setColumnCount(3);
+        for(int i=0;i<draftFiles.size();i++){
+            final int index=i;LinearLayout tile=column();tile.setPadding(dp(6),dp(6),dp(6),dp(6));tile.setBackground(box(selected.contains(i)?0xFF1D3B3C:PANEL,16));
+            tile.addView(preview(draftFiles.get(i)),new LinearLayout.LayoutParams(-1,dp(86)));
+            TextView caption=text((draftAnimated.get(i)?"ANIMATED":"STATIC")+"  "+(selected.contains(i)?"✓":"○"),9,selected.contains(i)?MINT:MUTED,true);caption.setGravity(Gravity.CENTER);tile.addView(caption);
+            GridLayout.LayoutParams lp=new GridLayout.LayoutParams();lp.width=0;lp.columnSpec=GridLayout.spec(GridLayout.UNDEFINED,1f);lp.setMargins(dp(3),dp(3),dp(3),dp(3));grid.addView(tile,lp);
+            click(tile,()->{if(!selected.remove(index))selected.add(index);tile.setBackground(box(selected.contains(index)?0xFF1D3B3C:PANEL,16));caption.setText((draftAnimated.get(index)?"ANIMATED":"STATIC")+"  "+(selected.contains(index)?"✓":"○"));persistQuietly();});
+        }
+        body.addView(grid);gap(body,20);body.addView(button("Save eligible packs · keep remaining stickers →",true,this::saveSelection));
+    }
+    private void saveSelection(){
+        ArrayList<File> still=new ArrayList<>(),motion=new ArrayList<>();
+        for(int i=0;i<draftFiles.size();i++)if(selected.contains(i))(draftAnimated.get(i)?motion:still).add(draftFiles.get(i));
+        SavePlan plan=new SavePlan(still.size(),motion.size());
+        try{PackStore.validateLabels(draftName,draftAuthor);persistDraft();}catch(Exception e){error(e.getMessage());return;}
+        if(!plan.canSave()){
+            draftNotice="Your draft is safe. WhatsApp needs 3 stickers per pack. Add more of a type to install it; nothing has been discarded.";
+            persistQuietly();render();return;
+        }
+        runJob(()->{
+            ArrayList<String> created=new ArrayList<>();HashSet<File> saved=new HashSet<>();
+            String base=draftName.length()>54?draftName.substring(0,54):draftName;
+            try{
+                if(plan.saveStatic){created.addAll(PackStore.save(this,still,false,base+(motion.isEmpty()?"":" · Static"),draftAuthor));saved.addAll(still);}
+                if(plan.saveAnimated){created.addAll(PackStore.save(this,motion,true,base+(still.isEmpty()?"":" · Motion"),draftAuthor));saved.addAll(motion);}
+            }catch(Exception e){for(String id:created)PackStore.removeTree(PackStore.dir(this,id));throw e;}
+            ArrayList<File> kept=new ArrayList<>();ArrayList<Boolean> types=new ArrayList<>();HashSet<Integer> choices=new HashSet<>();
+            for(int i=0;i<draftFiles.size();i++)if(!saved.contains(draftFiles.get(i))){if(selected.contains(i))choices.add(kept.size());kept.add(draftFiles.get(i));types.add(draftAnimated.get(i));}
+            draftFiles.clear();draftFiles.addAll(kept);draftAnimated.clear();draftAnimated.addAll(types);selected.clear();selected.addAll(choices);
+            draftNotice="Saved "+created.size()+" pack(s). "+draftFiles.size()+" sticker(s) remain safely in your draft.";
+            if(draftFiles.isEmpty()&&jobId.isEmpty())clearDraft();else{persistDraft();for(File file:saved)file.delete();}
+            ui(()->toast("Saved "+created.size()+" pack(s). Smaller groups were kept, not discarded."));
+        });
+    }
     private ImageView preview(File file){ImageView image=new ImageView(this);image.setScaleType(ImageView.ScaleType.FIT_CENTER);try{ImageDecoder.Source source=ImageDecoder.createSource(file);Drawable d=ImageDecoder.decodeDrawable(source,(decoder,info,s)->decoder.setTargetSize(128,128));image.setImageDrawable(d);if(d instanceof AnimatedImageDrawable)((AnimatedImageDrawable)d).start();}catch(Exception ignored){}return image;}
     private void library(){heading("THE COLLECTION","Your sticker vault.","Saved on your phone. Ready for WhatsApp—even offline.");List<JSONObject> packs=PackStore.all(this);if(packs.isEmpty()){LinearLayout c=card();c.addView(text("✦",52,PURPLE,true));gap(c,16);c.addView(text("Your first pack starts here",22,WHITE,true));gap(c,10);c.addView(text("Import a Telegram link or create something completely yours.",14,MUTED,false));gap(c,20);c.addView(button("Import a pack",true,this::importDialog));body.addView(c);}for(JSONObject p:packs){LinearLayout c=card();LinearLayout line=row();line.addView(text(p.optBoolean("animated")?"◉  MOTION":"◇  STATIC",11,p.optBoolean("animated")?PURPLE:MINT,true),new LinearLayout.LayoutParams(0,-2,1));TextView edit=text("•••",22,MUTED,true);edit.setPadding(dp(16),0,0,0);line.addView(edit);click(edit,()->packOptions(p));c.addView(line);gap(c,12);c.addView(text(p.optString("name"),21,WHITE,true));gap(c,4);c.addView(text(p.optJSONArray("stickers").length()+" stickers · "+p.optString("author"),12,MUTED,false));gap(c,16);LinearLayout previews=row();JSONArray files=p.optJSONArray("stickers");for(int i=0;i<Math.min(4,files.length());i++){ImageView im=preview(new File(PackStore.dir(this,p.optString("id")),files.optString(i)));previews.addView(im,new LinearLayout.LayoutParams(0,dp(66),1));}c.addView(previews);gap(c,18);c.addView(button("Add whole pack to WhatsApp  ↗",true,()->addWhatsApp(p)));body.addView(c);gap(body,16);}}
     private void packOptions(JSONObject p){new AlertDialog.Builder(this).setTitle(p.optString("name")).setItems(new String[]{"Preview & choose tray icon","Edit name and author","Delete from this app"},(d,n)->{if(n==0)packPreview(p);else if(n==1){LinearLayout f=dialogFields();EditText name=field(f,"Pack name",p.optString("name")),author=field(f,"Author",p.optString("author"));AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Pack labels").setView(f).setPositiveButton("Save",null).setNegativeButton("Cancel",null).create();dialog.setOnShowListener(v->dialog.getButton(-1).setOnClickListener(w->{try{PackStore.rename(this,p.optString("id"),name.getText().toString(),author.getText().toString());dialog.dismiss();render();}catch(Exception e){error(e.getMessage());}}));dialog.show();}else new AlertDialog.Builder(this).setTitle("Delete this pack?").setMessage("This removes its files from this app. Remove it from WhatsApp first if you no longer want it there. This cannot be undone.").setPositiveButton("Delete",(a,b)->{PackStore.removeTree(PackStore.dir(this,p.optString("id")));render();}).setNegativeButton("Keep",null).show();}).show();}
     private void packPreview(JSONObject p){ScrollView scroll=new ScrollView(this);LinearLayout list=dialogFields();scroll.addView(list);JSONArray files=p.optJSONArray("stickers");list.addView(text("Tap a sticker to use it as the tray icon.",14,MUTED,false));for(int i=0;i<files.length();i++){final int index=i;ImageView im=preview(new File(PackStore.dir(this,p.optString("id")),files.optString(i)));list.addView(im,new LinearLayout.LayoutParams(-1,dp(120)));click(im,()->{try{PackStore.tray(this,p.optString("id"),index);toast("Tray icon updated. Re-add the pack to refresh WhatsApp.");}catch(Exception e){error(e.getMessage());}});}new AlertDialog.Builder(this).setTitle(p.optString("name")).setView(scroll).setPositiveButton("Done",null).show();}
     private void addWhatsApp(JSONObject p){ArrayList<String> packages=new ArrayList<>(),labels=new ArrayList<>();for(String pkg:new String[]{"com.whatsapp","com.whatsapp.w4b"})try{getPackageManager().getPackageInfo(pkg,0);packages.add(pkg);labels.add(pkg.endsWith("w4b")?"WhatsApp Business":"WhatsApp");}catch(Exception ignored){}if(packages.isEmpty()){error("Install WhatsApp or WhatsApp Business first.");return;}if(packages.size()==1){launchPack(p,packages.get(0));return;}new AlertDialog.Builder(this).setTitle("Add pack to…").setItems(labels.toArray(new String[0]),(d,w)->launchPack(p,packages.get(w))).show();}
     private void launchPack(JSONObject p,String pkg){try{Intent intent=new Intent("com.whatsapp.intent.action.ENABLE_STICKER_PACK");intent.setPackage(pkg);intent.putExtra("sticker_pack_id",p.optString("id"));intent.putExtra("sticker_pack_authority",getPackageName()+".provider");intent.putExtra("sticker_pack_name",p.optString("name"));startActivityForResult(intent,20);}catch(ActivityNotFoundException e){error("This WhatsApp version does not support adding sticker packs. Update it and retry.");}}
-    private void settings(){heading("SYSTEM CONTROL","Stay connected.","Your server fetches Telegram files. Your phone does the creative work.");LinearLayout c=card();c.addView(label("XTREME SERVER"));gap(c,14);EditText url=field(c,"https://your-server.onrender.com",server());url.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);c.addView(text("Use the base HTTPS address, without /pair. Never enter a Telegram token here.",13,MUTED,false));gap(c,16);c.addView(button("Save & check connection",true,()->{try{String base=Net.base(url.getText().toString());getPreferences(0).edit().putString("server",base).apply();checkServer();toast("Server saved");}catch(Exception e){error(e.getMessage());}}));body.addView(c);gap(body,22);body.addView(label("LOCAL BY DESIGN"));gap(body,12);body.addView(text("• No WhatsApp pairing or bot login\n• No account, analytics or cloud media uploads\n• Saved packs and local creation work offline\n• Keep this app installed to provide your packs\n\nTelegram imports require this server’s sticker API and TELEGRAM_BOT_TOKEN. Connected checks the API and Telegram access; Limited means the API is reachable but Telegram is unavailable.",14,MUTED,false));gap(body,24);body.addView(text("XTREME STICKERS  /  1.1\nIndependent project. Not affiliated with WhatsApp or Telegram.",11,MUTED,false));}
+    private void settings(){heading("SYSTEM CONTROL","Stay connected.","Your server fetches Telegram files and converts video packs. Local creation stays on your phone.");LinearLayout c=card();c.addView(label("XTREME SERVER"));gap(c,14);EditText url=field(c,"https://your-server.onrender.com",server());url.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);c.addView(text("Use the base HTTPS address, without /pair. Never enter a Telegram token here.",13,MUTED,false));gap(c,16);c.addView(button("Save & check connection",true,()->{try{String base=Net.base(url.getText().toString());getPreferences(0).edit().putString("server",base).apply();checkServer();toast("Server saved");}catch(Exception e){error(e.getMessage());}}));body.addView(c);gap(body,22);body.addView(label("LOCAL BY DESIGN"));gap(body,12);body.addView(text("• No WhatsApp pairing or bot login\n• No account, analytics or cloud media uploads\n• Saved packs and local creation work offline\n• Keep this app installed to provide your packs\n\nTelegram imports require this server’s sticker API and TELEGRAM_BOT_TOKEN. Connected checks the API and Telegram access; Limited means the API is reachable but Telegram is unavailable.",14,MUTED,false));gap(body,24);body.addView(text("XTREME STICKERS  /  1.2\nIndependent project. Not affiliated with WhatsApp or Telegram.",11,MUTED,false));}
     private void updateBadge(){if(badge!=null){badge.setText("●  "+status);badge.setTextColor(status.equals("Connected")?MINT:status.equals("Checking")?MUTED:PURPLE);}}
-    private void checkServer(){if(checking)return;if(server().isEmpty()){status="Set server";detail="Add your Render HTTPS address in Settings.";updateBadge();return;}checking=true;status="Checking";updateBadge();final String base=server();ping.submit(()->{long start=System.currentTimeMillis();String state,info;try{JSONObject result=new JSONObject(new String(Net.get(base,"/health",8192),StandardCharsets.UTF_8));if(result.optInt("api")!=1)throw new IOException("This server needs the sticker API patch");state=result.optBoolean("telegram")?"Connected":"Limited";info=base+"\n"+(System.currentTimeMillis()-start)+" ms · "+(state.equals("Connected")?"Telegram is reachable.":"API reachable; check TELEGRAM_BOT_TOKEN on the server.");}catch(Exception e){state="Disconnected";info="Could not reach the sticker API. The server may be waking up.\n"+e.getMessage();}final String next=state,description=info;ui(()->{checking=false;status=next;detail=description;updateBadge();});});}
+    private void checkServer(){if(checking)return;if(server().isEmpty()){status="Set server";detail="Add your Render HTTPS address in Settings.";updateBadge();return;}checking=true;status="Checking";updateBadge();final String base=server();ping.submit(()->{long start=System.currentTimeMillis();String state,info;try{JSONObject result=new JSONObject(new String(Net.get(base,"/health",8192),StandardCharsets.UTF_8));if(result.optInt("api")!=1)throw new IOException("This server needs the sticker API patch");boolean engine=result.optJSONArray("capabilities")!=null&&result.getJSONArray("capabilities").toString().contains("video-batch-v1");state=result.optBoolean("telegram")&&engine?"Connected":"Limited";info=base+"\n"+(System.currentTimeMillis()-start)+" ms · "+(state.equals("Connected")?"Telegram is reachable.":"API reachable; check the v1.2 server patch and TELEGRAM_BOT_TOKEN.");}catch(Exception e){state="Disconnected";info="Could not reach the sticker API. The server may be waking up.\n"+e.getMessage();}final String next=state,description=info;ui(()->{checking=false;status=next;detail=description;updateBadge();});});}
     private void toast(String value){Toast.makeText(this,value,Toast.LENGTH_LONG).show();}
     private void error(String message){new AlertDialog.Builder(this).setTitle("A quick heads-up").setMessage(message).setPositiveButton("Got it",null).show();}
     private final class Hero extends View{

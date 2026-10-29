@@ -14,13 +14,14 @@ async function fixture(t, overrides = {}) {
     },
     async get(){return {data:Buffer.from('test')};}
   };
-  const app=express();app.use('/api/stickers',createStickerApi({token:'SECRET_TOKEN',http,...overrides}));
+  const app=express();app.use(express.json({limit:'32kb'}));app.use('/api/stickers',createStickerApi({token:'SECRET_TOKEN',http,...overrides}));
   const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
   t.after(()=>new Promise(resolve=>server.close(resolve)));
-  return {calls,get:path=>fetch(`http://127.0.0.1:${server.address().port}/api/stickers${path}`)};
+  const base=`http://127.0.0.1:${server.address().port}/api/stickers`;
+  return {calls,get:path=>fetch(base+path),post:(path,body)=>fetch(base+path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)})};
 }
 test('health checks Telegram, caches the check, and exposes no credentials',async t=>{
-  const f=await fixture(t);assert.deepEqual(await (await f.get('/health')).json(),{api:1,status:'connected',telegram:true});await f.get('/health');assert.equal(f.calls.length,1);
+  const f=await fixture(t);assert.deepEqual(await (await f.get('/health')).json(),{api:1,status:'connected',telegram:true,capabilities:['video-batch-v1']});await f.get('/health');assert.equal(f.calls.length,1);
 });
 test('missing token reports limited without contacting Telegram',async t=>{
   const f=await fixture(t,{token:''});assert.equal((await (await f.get('/health')).json()).status,'limited');assert.equal(f.calls.length,0);assert.equal((await f.get('/packs/Cats')).status,503);
@@ -36,4 +37,11 @@ test('upstream failures never expose token-bearing errors',async t=>{
 });
 test('requests are rate limited',async t=>{
   const f=await fixture(t);for(let i=0;i<90;i++)await f.get('/files/missing');assert.equal((await f.get('/health')).status,429);
+});
+test('video jobs reject missing, expired and non-video tickets',async t=>{
+  const f=await fixture(t);
+  assert.equal((await f.post('/jobs',{tickets:[]})).status,400);
+  assert.equal((await f.post('/jobs',{tickets:['a'.repeat(48)]})).status,410);
+  const pack=await(await f.get('/packs/Cats')).json();
+  assert.equal((await f.post('/jobs',{tickets:[pack.stickers[0].ticket]})).status,400);
 });

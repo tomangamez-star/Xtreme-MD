@@ -1,5 +1,9 @@
 # Start here
 
+**Current v1.2 update:** follow `UPGRADE-1.2.md`. Redeploy the server with
+the new video batch routes, then install the APK over v1.1 without uninstalling.
+The older first-install instructions below are retained for reference.
+
 **Updating from 1.0 to 1.1?** Follow `UPGRADE-1.1.md` instead. The steps below
 describe the original server/app setup. A working 1.0 server does not need
 to be redeployed for the 1.1 speed patch.

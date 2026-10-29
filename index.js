@@ -3,7 +3,7 @@ const config = require('./config');
 const { startBot, getStatus, requestWebPairingCode } = require('./src/bot');
 
 const app = express();
-app.use(express.json({ limit: '10kb' }));
+app.use(express.json({ limit: '32kb' }));
 app.use('/api/stickers', require('./src/sticker-api').createStickerApi());
 app.get('/', (_req, res) => res.redirect('/pair'));
 app.get('/health', (_req, res) => res.status(200).send('OK'));

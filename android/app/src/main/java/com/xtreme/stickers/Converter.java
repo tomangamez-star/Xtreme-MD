@@ -102,15 +102,16 @@ final class Converter {
     static byte[] animation(File input,String format,File cacheDir)throws Exception{
         cacheDir.mkdirs();
         java.security.MessageDigest digest=java.security.MessageDigest.getInstance("SHA-256");
-        digest.update(("fast-v2:"+format+":").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        digest.update(("validated-v3:"+format+":").getBytes(java.nio.charset.StandardCharsets.UTF_8));
         try(InputStream in=new FileInputStream(input)){
             byte[] buffer=new byte[8192];int n;
             while((n=in.read(buffer))!=-1){if(Thread.currentThread().isInterrupted())throw new InterruptedException();digest.update(buffer,0,n);}
         }
         StringBuilder key=new StringBuilder();for(byte b:digest.digest())key.append(String.format(java.util.Locale.ROOT,"%02x",b&255));
         File cached=new File(cacheDir,key+".webp");
-        if(cached.isFile()&&cached.length()>12&&cached.length()<=512000){cached.setLastModified(System.currentTimeMillis());return java.nio.file.Files.readAllBytes(cached.toPath());}
+        if(cached.isFile()&&cached.length()>12&&cached.length()<=512000){byte[] bytes=java.nio.file.Files.readAllBytes(cached.toPath());try{WebpInfo.requireAnimation(bytes);cached.setLastModified(System.currentTimeMillis());return bytes;}catch(IOException invalid){cached.delete();}}
         byte[] bytes=animation(input,format);
+        WebpInfo.requireAnimation(bytes);
         // Cache failure must not lose a successfully converted sticker.
         try{
             File temp=File.createTempFile("writing-",".tmp",cacheDir);

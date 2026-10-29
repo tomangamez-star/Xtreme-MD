@@ -1,0 +1,22 @@
+name: Sticker video API tests
+on:
+  workflow_dispatch:
+  push:
+    paths: ['src/sticker-api.js', 'src/sticker-video.js', 'test/sticker-api.test.js', 'test/sticker-video.test.js', '.github/workflows/sticker-api.yml']
+  pull_request:
+    paths: ['src/sticker-api.js', 'src/sticker-video.js', 'test/sticker-api.test.js', 'test/sticker-video.test.js', '.github/workflows/sticker-api.yml']
+permissions:
+  contents: read
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg
+      - run: node --test test/sticker-api.test.js test/sticker-video.test.js

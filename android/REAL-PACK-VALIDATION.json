@@ -1,0 +1,365 @@
+{
+  "pack": "OshinoKoVid",
+  "sourceFormat": "webm",
+  "sourceCount": 50,
+  "validatedAnimated": 50,
+  "decodedMoving": 50,
+  "localBatchMs": 19238,
+  "packetBytes": 13209534,
+  "cachedSubmitMs": 28,
+  "timingConditions": "Local API using already downloaded real source videos; excludes Telegram download and deployed Render speed",
+  "phoneUIExecuted": false,
+  "liveWhatsAppExecuted": false,
+  "results": [
+    {
+      "index": 0,
+      "frames": 22,
+      "duration": 2750,
+      "bytes": 349924,
+      "moving": true
+    },
+    {
+      "index": 1,
+      "frames": 12,
+      "duration": 1200,
+      "bytes": 203610,
+      "moving": true
+    },
+    {
+      "index": 2,
+      "frames": 29,
+      "duration": 2900,
+      "bytes": 367516,
+      "moving": true
+    },
+    {
+      "index": 3,
+      "frames": 30,
+      "duration": 3000,
+      "bytes": 184318,
+      "moving": true
+    },
+    {
+      "index": 4,
+      "frames": 22,
+      "duration": 2200,
+      "bytes": 369694,
+      "moving": true
+    },
+    {
+      "index": 5,
+      "frames": 7,
+      "duration": 700,
+      "bytes": 67974,
+      "moving": true
+    },
+    {
+      "index": 6,
+      "frames": 28,
+      "duration": 2900,
+      "bytes": 189022,
+      "moving": true
+    },
+    {
+      "index": 7,
+      "frames": 29,
+      "duration": 2900,
+      "bytes": 165896,
+      "moving": true
+    },
+    {
+      "index": 8,
+      "frames": 23,
+      "duration": 2900,
+      "bytes": 385534,
+      "moving": true
+    },
+    {
+      "index": 9,
+      "frames": 22,
+      "duration": 2900,
+      "bytes": 289940,
+      "moving": true
+    },
+    {
+      "index": 10,
+      "frames": 24,
+      "duration": 3000,
+      "bytes": 372868,
+      "moving": true
+    },
+    {
+      "index": 11,
+      "frames": 14,
+      "duration": 1500,
+      "bytes": 226882,
+      "moving": true
+    },
+    {
+      "index": 12,
+      "frames": 13,
+      "duration": 1500,
+      "bytes": 234090,
+      "moving": true
+    },
+    {
+      "index": 13,
+      "frames": 24,
+      "duration": 2400,
+      "bytes": 279638,
+      "moving": true
+    },
+    {
+      "index": 14,
+      "frames": 20,
+      "duration": 2100,
+      "bytes": 279008,
+      "moving": true
+    },
+    {
+      "index": 15,
+      "frames": 26,
+      "duration": 2700,
+      "bytes": 290126,
+      "moving": true
+    },
+    {
+      "index": 16,
+      "frames": 23,
+      "duration": 3000,
+      "bytes": 375490,
+      "moving": true
+    },
+    {
+      "index": 17,
+      "frames": 19,
+      "duration": 1900,
+      "bytes": 330634,
+      "moving": true
+    },
+    {
+      "index": 18,
+      "frames": 28,
+      "duration": 2900,
+      "bytes": 316762,
+      "moving": true
+    },
+    {
+      "index": 19,
+      "frames": 27,
+      "duration": 2900,
+      "bytes": 146910,
+      "moving": true
+    },
+    {
+      "index": 20,
+      "frames": 25,
+      "duration": 2900,
+      "bytes": 346478,
+      "moving": true
+    },
+    {
+      "index": 21,
+      "frames": 27,
+      "duration": 2700,
+      "bytes": 320636,
+      "moving": true
+    },
+    {
+      "index": 22,
+      "frames": 23,
+      "duration": 2875,
+      "bytes": 402758,
+      "moving": true
+    },
+    {
+      "index": 23,
+      "frames": 27,
+      "duration": 2700,
+      "bytes": 380072,
+      "moving": true
+    },
+    {
+      "index": 24,
+      "frames": 29,
+      "duration": 2900,
+      "bytes": 321114,
+      "moving": true
+    },
+    {
+      "index": 25,
+      "frames": 21,
+      "duration": 2625,
+      "bytes": 406876,
+      "moving": true
+    },
+    {
+      "index": 26,
+      "frames": 24,
+      "duration": 3000,
+      "bytes": 446010,
+      "moving": true
+    },
+    {
+      "index": 27,
+      "frames": 11,
+      "duration": 1600,
+      "bytes": 87226,
+      "moving": true
+    },
+    {
+      "index": 28,
+      "frames": 10,
+      "duration": 1000,
+      "bytes": 225178,
+      "moving": true
+    },
+    {
+      "index": 29,
+      "frames": 14,
+      "duration": 1400,
+      "bytes": 348750,
+      "moving": true
+    },
+    {
+      "index": 30,
+      "frames": 21,
+      "duration": 2625,
+      "bytes": 464618,
+      "moving": true
+    },
+    {
+      "index": 31,
+      "frames": 17,
+      "duration": 1700,
+      "bytes": 377420,
+      "moving": true
+    },
+    {
+      "index": 32,
+      "frames": 30,
+      "duration": 3000,
+      "bytes": 268762,
+      "moving": true
+    },
+    {
+      "index": 33,
+      "frames": 21,
+      "duration": 2900,
+      "bytes": 322320,
+      "moving": true
+    },
+    {
+      "index": 34,
+      "frames": 12,
+      "duration": 1900,
+      "bytes": 199562,
+      "moving": true
+    },
+    {
+      "index": 35,
+      "frames": 28,
+      "duration": 2800,
+      "bytes": 414088,
+      "moving": true
+    },
+    {
+      "index": 36,
+      "frames": 17,
+      "duration": 1700,
+      "bytes": 207624,
+      "moving": true
+    },
+    {
+      "index": 37,
+      "frames": 10,
+      "duration": 1300,
+      "bytes": 48386,
+      "moving": true
+    },
+    {
+      "index": 38,
+      "frames": 26,
+      "duration": 2900,
+      "bytes": 245616,
+      "moving": true
+    },
+    {
+      "index": 39,
+      "frames": 17,
+      "duration": 1700,
+      "bytes": 73494,
+      "moving": true
+    },
+    {
+      "index": 40,
+      "frames": 12,
+      "duration": 2000,
+      "bytes": 183286,
+      "moving": true
+    },
+    {
+      "index": 41,
+      "frames": 23,
+      "duration": 2900,
+      "bytes": 156070,
+      "moving": true
+    },
+    {
+      "index": 42,
+      "frames": 14,
+      "duration": 2900,
+      "bytes": 88134,
+      "moving": true
+    },
+    {
+      "index": 43,
+      "frames": 15,
+      "duration": 2000,
+      "bytes": 320008,
+      "moving": true
+    },
+    {
+      "index": 44,
+      "frames": 27,
+      "duration": 2900,
+      "bytes": 84332,
+      "moving": true
+    },
+    {
+      "index": 45,
+      "frames": 16,
+      "duration": 1600,
+      "bytes": 152190,
+      "moving": true
+    },
+    {
+      "index": 46,
+      "frames": 9,
+      "duration": 2100,
+      "bytes": 38806,
+      "moving": true
+    },
+    {
+      "index": 47,
+      "frames": 19,
+      "duration": 2900,
+      "bytes": 248528,
+      "moving": true
+    },
+    {
+      "index": 48,
+      "frames": 21,
+      "duration": 2900,
+      "bytes": 218526,
+      "moving": true
+    },
+    {
+      "index": 49,
+      "frames": 28,
+      "duration": 2800,
+      "bytes": 386422,
+      "moving": true
+    }
+  ]
+}
