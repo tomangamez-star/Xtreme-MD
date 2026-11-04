@@ -1,0 +1,24 @@
+Xtreme MD update — modified files only
+
+Replace these paths in your repository:
+- index.js
+- src/bot.js
+- src/db.js
+- public/pair.html
+
+IMPORTANT: Add a strong DASHBOARD_TOKEN environment variable in Render before using
+Disconnect & Unpair. The endpoint intentionally refuses unpair requests when this
+secret is not configured, so an unauthenticated visitor cannot disconnect the bot.
+
+Changes:
+- `cute` replaces `.vv`, and works as a bare reply to supported view-once image,
+  video, and audio messages.
+- Recovered media is sent to the bot account's own WhatsApp chat, not the source chat.
+- Dashboard now shows connection status and exposes a real Disconnect & Unpair action.
+- Unpair logs the linked device out, clears local session files and deletes the
+  persisted xtreme_auth rows in Supabase before starting a clean pairing socket.
+
+Validation note:
+- Files are generated from the repository's main-branch source inspected in this task.
+- Run `npm run check` and `npm test` after replacing the files and before deployment.
+- Live WhatsApp pairing/logout behavior must be verified on your Render instance.
