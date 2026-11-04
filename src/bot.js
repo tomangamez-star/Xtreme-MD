@@ -7,7 +7,7 @@ const {
   DisconnectReason, Browsers, downloadContentFromMessage, getContentType
 } = require('@whiskeysockets/baileys');
 const config = require('../config');
-const { initDb, restoreAuth, backupAuth, getSetting } = require('./db');
+const { initDb, restoreAuth, backupAuth, getSetting, clearAuth } = require('./db');
 const { textOf, parseCommand, digits, isOwner, quotedMessage } = require('./utils');
 const { runCommand, reply } = require('./commands');
 const { buildWelcomeCard } = require('./welcome-card');
@@ -21,6 +21,10 @@ let suppressReconnectUntil = 0;
 let sessionRestored = false;
 let reconnectTimer = null;
 const getStatus = () => status;
+const getConnectionInfo = () => ({
+  status,
+  number: activeSocket?.user?.id ? digits(activeSocket.user.id) : null
+});
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -35,7 +39,7 @@ async function createFreshPairingSocket() {
   }
   await wait(350);
   const socket = await startBot();
-  await wait(3000);
+  await wait(1000);
   return socket;
 }
 
@@ -43,12 +47,12 @@ async function requestWebPairingCode(requestedNumber) {
   const number = String(requestedNumber || config.botNumber || '').replace(/\D/g, '');
   if (!/^\d{8,15}$/.test(number)) throw new Error('Enter a valid WhatsApp number with country code, without + or spaces.');
   if (activeState?.creds.registered) {
-    const error = new Error('Xtreme MD is already paired.'); error.code = 'ALREADY_PAIRED'; throw error;
+    const error = new Error('Xtreme MD is already paired. Unpair the current number first.'); error.code = 'ALREADY_PAIRED'; throw error;
   }
   const now = Date.now();
   if (now - lastPairRequest < config.pairingCooldownMs) {
-    const wait = Math.ceil((config.pairingCooldownMs - (now - lastPairRequest)) / 1000);
-    const error = new Error(`Please wait ${wait} seconds before requesting another code.`); error.code = 'RATE_LIMITED'; throw error;
+    const waitSeconds = Math.ceil((config.pairingCooldownMs - (now - lastPairRequest)) / 1000);
+    const error = new Error(`Please wait ${waitSeconds} seconds before requesting another code.`); error.code = 'RATE_LIMITED'; throw error;
   }
   lastPairRequest = now;
   let socket = await createFreshPairingSocket();
@@ -66,17 +70,86 @@ async function requestWebPairingCode(requestedNumber) {
   return { code, number: number.replace(/^(\d{3})\d+(\d{4})$/, '$1••••••$2') };
 }
 
+async function unpairWebSession() {
+  const previous = activeSocket;
+  status = 'unpairing';
+  suppressReconnectUntil = Date.now() + 120000;
+  reconnecting = false;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  activeSocket = null;
+  activeState = null;
+
+  // Ask WhatsApp to revoke the linked device before removing local credentials.
+  if (previous) {
+    try { await previous.logout(); }
+    catch (error) { console.warn(`[UNPAIR] Remote logout returned: ${error.message}`); }
+    try { previous.end(new Error('WhatsApp session unpaired by dashboard')); } catch {}
+  }
+
+  await clearAuth();
+  const sessionDir = path.join(process.cwd(), 'session');
+  fs.rmSync(sessionDir, { recursive: true, force: true });
+  fs.mkdirSync(sessionDir, { recursive: true });
+  status = 'offline';
+
+  // Start a clean, unregistered socket so the next number can request a code.
+  await wait(500);
+  await startBot();
+  return { ok: true, status: 'offline' };
+}
+
+async function unwrapMessage(message) {
+  let current = message;
+  for (let i = 0; i < 5 && current; i++) {
+    const next = current.ephemeralMessage?.message ||
+      current.viewOnceMessageV2?.message ||
+      current.viewOnceMessageV2Extension?.message ||
+      current.viewOnceMessage?.message;
+    if (!next) break;
+    current = next;
+  }
+  return current;
+}
+
 async function handleVV(sock, msg, text) {
-  if (text.trim().toLowerCase() !== '.vv') return false;
+  if (text.trim().toLowerCase() !== 'cute') return false;
   const q = quotedMessage(msg);
-  if (!q) return reply(sock, msg, 'Reply to view-once media with *.vv*.'), true;
-  let content = q.message.viewOnceMessageV2?.message || q.message.viewOnceMessage?.message || q.message;
+  if (!q) {
+    await reply(sock, msg, 'Reply to a view-once image, video or audio with *cute*.');
+    return true;
+  }
+  const content = await unwrapMessage(q.message);
   const type = getContentType(content);
-  if (!['imageMessage','videoMessage','audioMessage'].includes(type)) return reply(sock,msg,'That message has no supported view-once media.'), true;
-  const mediaType = type.replace('Message','');
-  const stream = await downloadContentFromMessage(content[type], mediaType);
-  const chunks=[]; for await(const chunk of stream) chunks.push(chunk);
-  await sock.sendMessage(msg.key.remoteJid, { [mediaType]: Buffer.concat(chunks), caption: content[type].caption || 'Revealed by Xtreme MD' }, { quoted: msg });
+  if (!['imageMessage', 'videoMessage', 'audioMessage'].includes(type)) {
+    await reply(sock, msg, 'That message has no supported view-once media.');
+    return true;
+  }
+
+  const media = content[type];
+  const mediaType = type.replace('Message', '');
+  const stream = await downloadContentFromMessage(media, mediaType);
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  const buffer = Buffer.concat(chunks);
+  const selfJid = sock.user?.id;
+  if (!selfJid) {
+    await reply(sock, msg, 'The bot account is not ready yet. Try again shortly.');
+    return true;
+  }
+
+  const destination = selfJid.includes('@') ? selfJid : `${digits(selfJid)}@s.whatsapp.net`;
+  let payload;
+  if (mediaType === 'audio') {
+    payload = { audio: buffer, mimetype: media.mimetype || 'audio/mpeg', ptt: Boolean(media.ptt) };
+  } else {
+    payload = { [mediaType]: buffer };
+    if (media.caption) payload.caption = media.caption;
+    else if (mediaType === 'image' || mediaType === 'video') payload.caption = 'Recovered with Xtreme MD';
+  }
+  await sock.sendMessage(destination, payload);
   return true;
 }
 
@@ -120,6 +193,7 @@ async function startBot() {
   activeState = state;
 
   sock.ev.on('creds.update', async () => {
+    if (sock !== activeSocket) return;
     try { await saveCreds(); await backupAuth(); }
     catch (error) { console.warn(`[AUTH] Credential save failed: ${error.message}`); }
   });
@@ -203,4 +277,4 @@ function scheduleReconnect(delayMs) {
   }, delayMs);
 }
 
-module.exports = { startBot, getStatus, requestWebPairingCode };
+module.exports = { startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession };

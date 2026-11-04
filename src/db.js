@@ -110,8 +110,6 @@ async function syncAuthDirectory(db, directory) {
     for (const [name, value] of files) {
       await client.query(`INSERT INTO xtreme_auth(name,value,updated_at) VALUES($1,$2,NOW()) ON CONFLICT(name) DO UPDATE SET value=$2,updated_at=NOW()`, [name, value]);
     }
-    // Baileys rotates and deletes keys. Remove their stale database copies so a
-    // later deploy cannot resurrect invalid sender/session keys.
     await client.query('DELETE FROM xtreme_auth WHERE NOT (name = ANY($1::text[]))', [files.map(([name]) => name)]);
     await client.query('COMMIT');
     return { saved: files.length, persistent: true };
@@ -122,6 +120,24 @@ async function syncAuthDirectory(db, directory) {
   } finally {
     client.release();
   }
+}
+
+async function clearAuth() {
+  // Serialize against any pending credential backup so it cannot reinsert stale keys.
+  authBackupQueue = authBackupQueue.catch(() => {}).then(async () => {
+    const db = getPool();
+    if (db) {
+      try { await db.query('DELETE FROM xtreme_auth'); }
+      catch (error) {
+        await markDatabaseUnavailable(error);
+        throw new Error(`Could not clear the saved Supabase session: ${error.message}`);
+      }
+    }
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.mkdirSync(sessionDir, { recursive: true });
+    return { cleared: true, persistent: Boolean(db) };
+  });
+  return authBackupQueue;
 }
 
 async function getSetting(key, fallback) {
@@ -161,4 +177,4 @@ async function consumeMusic(userId) {
   }
 }
 
-module.exports = { sessionDir, initDb, restoreAuth, backupAuth, getSetting, setSetting, consumeMusic, restoreAuthDirectory, syncAuthDirectory };
+module.exports = { sessionDir, initDb, restoreAuth, backupAuth, clearAuth, getSetting, setSetting, consumeMusic, restoreAuthDirectory, syncAuthDirectory };
