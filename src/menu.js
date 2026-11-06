@@ -9,7 +9,7 @@ const categories = {
     'Xstopspam — stop repeats', 'Xkick · Xpromote · Xdemote',
     'Xtagall · Xhidetag · Xlink · Xrevoke', 'Xantilink on/delete/warn/off', 'Xwelcome on/off · Xgoodbye on/off'],
   music: ['【03】AUDIO_SYSTEM', 'Xplay <song or YouTube link>'],
-  tools: ['【04】UTILITY_CORE', 'Xtts <text> · Xcalc <expression>', 'Xshort <url> · Xgetpp', 'cute — reply to view-once media (view-once here + normal copy in your DM)'],
+  tools: ['【04】UTILITY_CORE', 'Xtts <text> · Xcalc <expression>', 'Xshort <url> · Xgetpp', 'cute — owner-only, reply to view-once media (view-once here + normal copy in your DM)'],
   fun: ['【05】XTREME_ZONE', 'Xfact · Xquote · Xtruth · Xdare', 'Xwaifu · Xneko'],
   system: ['【06】SYSTEM_CONTROL', 'Xping · Xalive · Xruntime · Xowner', 'Xmenu <category> · Xmenu all']
 };

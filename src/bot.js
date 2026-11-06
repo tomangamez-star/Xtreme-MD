@@ -114,60 +114,97 @@ async function unwrapMessage(message) {
   return current;
 }
 
+// Resolve the owner's personal-chat JID. Prefers the configured owner number and
+// falls back to the bot's own account when no owner is set.
+function ownerJidFor(sock) {
+  if (config.ownerNumbers.length) return `${config.ownerNumbers[0]}@s.whatsapp.net`;
+  const selfJid = sock.user?.id;
+  if (!selfJid) return null;
+  return selfJid.includes('@') ? selfJid : `${digits(selfJid)}@s.whatsapp.net`;
+}
+
+// Every diagnostic for `cute` goes to the owner's DM and nowhere else. The chat
+// where the command was used must stay completely silent, so this never throws.
+async function notifyOwner(sock, ownerJid, text) {
+  if (!ownerJid) return;
+  try {
+    await sock.sendMessage(ownerJid, { text });
+  } catch (error) {
+    console.warn(`[CUTE] Owner notice failed: ${error.message}`);
+  }
+}
+
 async function handleVV(sock, msg, text, deps = {}) {
   const download = deps.download || downloadContentFromMessage;
   if (text.trim().toLowerCase() !== 'cute') return false;
-  const q = quotedMessage(msg);
-  if (!q) {
-    await reply(sock, msg, 'Reply to a view-once image, video or audio with *cute*.');
-    return true;
-  }
-  const content = await unwrapMessage(q.message);
-  const type = getContentType(content);
-  if (!['imageMessage', 'videoMessage', 'audioMessage'].includes(type)) {
-    await reply(sock, msg, 'That message has no supported view-once media.');
-    return true;
-  }
 
-  const media = content[type];
-  const mediaType = type.replace('Message', '');
-  const stream = await download(media, mediaType);
-  const chunks = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  const buffer = Buffer.concat(chunks);
-  const selfJid = sock.user?.id;
-  if (!selfJid) {
-    await reply(sock, msg, 'The bot account is not ready yet. Try again shortly.');
+  // Owner-only, and silent for everyone else: a non-owner gets no reply, no
+  // usage hint, no warning, no reaction and no read-receipt change. We return
+  // before any send to the originating chat, and swallow every error so nothing
+  // can surface in that chat or as an unhandled rejection.
+  const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
+  const ownerJid = ownerJidFor(sock);
+  if (!config.ownerNumbers.includes(digits(sender))) {
+    // Silent in the triggering chat: no reply, no usage hint, no warning, no
+    // reaction, no read-receipt change. The owner still gets the diagnostic in
+    // their DM, and notifyOwner never throws, so nothing can surface here.
+    console.log(`[CUTE] Ignored non-owner request from ${digits(sender)}`);
+    await notifyOwner(sock, ownerJid, `\u26a0\ufe0f Ignored *cute* from non-owner +${digits(sender)} in ${msg.key.remoteJid}.`);
     return true;
   }
 
-  // Build the media payload once, then send it twice in two different forms.
-  const buildPayload = () => {
-    if (mediaType === 'audio') {
-      return { audio: buffer, mimetype: media.mimetype || 'audio/mpeg', ptt: Boolean(media.ptt) };
-    }
-    const payload = { [mediaType]: buffer };
-    if (media.caption) payload.caption = media.caption;
-    else if (mediaType === 'image' || mediaType === 'video') payload.caption = 'Recovered with Xtreme MD';
-    return payload;
-  };
-
-  // 1) View-once copy in the chat where the command was used.
-  //    Baileys wraps any payload carrying `viewOnce: true` in a viewOnceMessage
-  //    envelope, so the recipient can open it exactly once and it then disappears.
-  const chatJid = msg.key.remoteJid;
-  await sock.sendMessage(chatJid, { ...buildPayload(), viewOnce: true }, { quoted: msg });
-
-  // 2) Normal, permanently viewable copy in the owner's personal chat.
-  //    A failure here must never break the command that already succeeded above.
-  const ownerJid = config.ownerNumbers.length
-    ? `${config.ownerNumbers[0]}@s.whatsapp.net`
-    : (selfJid.includes('@') ? selfJid : `${digits(selfJid)}@s.whatsapp.net`);
   try {
-    await sock.sendMessage(ownerJid, buildPayload());
+    const q = quotedMessage(msg);
+    if (!q) {
+      await notifyOwner(sock, ownerJid, 'Reply to a view-once image, video or audio with *cute*.');
+      return true;
+    }
+    const content = await unwrapMessage(q.message);
+    const type = getContentType(content);
+    if (!['imageMessage', 'videoMessage', 'audioMessage'].includes(type)) {
+      await notifyOwner(sock, ownerJid, 'That message has no supported view-once media.');
+      return true;
+    }
+
+    const media = content[type];
+    const mediaType = type.replace('Message', '');
+    const stream = await download(media, mediaType);
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    const buffer = Buffer.concat(chunks);
+    if (!sock.user?.id) {
+      await notifyOwner(sock, ownerJid, 'The bot account is not ready yet. Try again shortly.');
+      return true;
+    }
+
+    // Build the media payload once, then send it twice in two different forms.
+    const buildPayload = () => {
+      if (mediaType === 'audio') {
+        return { audio: buffer, mimetype: media.mimetype || 'audio/mpeg', ptt: Boolean(media.ptt) };
+      }
+      const payload = { [mediaType]: buffer };
+      if (media.caption) payload.caption = media.caption;
+      else if (mediaType === 'image' || mediaType === 'video') payload.caption = 'Recovered with Xtreme MD';
+      return payload;
+    };
+
+    // 1) View-once copy in the chat where the command was used.
+    //    Baileys wraps any payload carrying `viewOnce: true` in a viewOnceMessage
+    //    envelope, so the recipient can open it exactly once and it then disappears.
+    const chatJid = msg.key.remoteJid;
+    await sock.sendMessage(chatJid, { ...buildPayload(), viewOnce: true }, { quoted: msg });
+
+    // 2) Normal, permanently viewable copy in the owner's personal chat.
+    //    A failure here must never break the command that already succeeded above.
+    try {
+      await sock.sendMessage(ownerJid, buildPayload());
+    } catch (error) {
+      console.warn(`[CUTE] Personal-chat copy failed: ${error.message}`);
+      await notifyOwner(sock, ownerJid, '\u26a0\ufe0f Sent as view-once here, but the copy to your personal chat failed.');
+    }
   } catch (error) {
-    console.warn(`[CUTE] Personal-chat copy failed: ${error.message}`);
-    await reply(sock, msg, '\u26a0\ufe0f Sent as view-once here, but the copy to your personal chat failed.').catch(() => {});
+    console.warn(`[CUTE] Failed: ${error.message}`);
+    await notifyOwner(sock, ownerJid, `\u274c *cute* failed: ${error.message}`);
   }
   return true;
 }
