@@ -2,7 +2,30 @@ const { jidNormalizedUser, getContentType } = require('@whiskeysockets/baileys')
 const config = require('../config');
 
 const digits = jid => String(jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
+const isLidJid = jid => /@lid$/i.test(String(jid || '').split(':')[0]);
 const isOwner = jid => [...config.ownerNumbers, ...config.sudoNumbers].includes(digits(jid));
+
+// Every JID-ish field a Baileys message key can carry the sender in. `participantAlt`
+// and `remoteJidAlt` hold the *alternate* addressing form, so in a PN-addressed group
+// message participantAlt carries the LID (and vice versa) — checking only one field
+// misses the owner whenever the message arrives in the other addressing mode.
+function senderJids(msg) {
+  const key = msg?.key || {};
+  const context = msg?.message?.extendedTextMessage?.contextInfo || {};
+  return [
+    key.participant, key.participantAlt, key.participantPn, key.participantLid,
+    key.senderPn, key.senderLid,
+    key.remoteJid, key.remoteJidAlt,
+    context.participant, context.participantPn, context.participantLid
+  ].filter(Boolean);
+}
+
+// True when any of the message's sender fields resolves to a configured owner number.
+function isOwnerSender(msg) {
+  const owners = config.ownerNumbers;
+  if (!owners.length) return false;
+  return senderJids(msg).some(jid => owners.includes(digits(jid)));
+}
 
 function textOf(message) {
   const m = message?.message;
@@ -34,4 +57,4 @@ function quotedMessage(msg) {
   return context?.quotedMessage ? { message: context.quotedMessage, participant: context.participant } : null;
 }
 
-module.exports = { digits, isOwner, textOf, parseCommand, quotedMessage, jidNormalizedUser };
+module.exports = { digits, isLidJid, isOwner, isOwnerSender, senderJids, textOf, parseCommand, quotedMessage, jidNormalizedUser };

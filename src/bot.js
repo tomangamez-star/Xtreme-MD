@@ -8,7 +8,7 @@ const {
 } = require('@whiskeysockets/baileys');
 const config = require('../config');
 const { initDb, restoreAuth, backupAuth, getSetting, clearAuth } = require('./db');
-const { textOf, parseCommand, digits, isOwner, quotedMessage } = require('./utils');
+const { textOf, parseCommand, digits, isOwner, isLidJid, senderJids, isOwnerSender, quotedMessage } = require('./utils');
 const { runCommand, reply } = require('./commands');
 const { buildWelcomeCard } = require('./welcome-card');
 
@@ -134,6 +134,36 @@ async function notifyOwner(sock, ownerJid, text) {
   }
 }
 
+// Resolve a LID to its phone number through the socket's LID<->PN store. Returns
+// null when the mapping is unknown so callers can fall back safely.
+async function pnForLid(sock, jid) {
+  if (!isLidJid(jid)) return null;
+  try {
+    const pn = await sock?.signalRepository?.lidMapping?.getPNForLID?.(jid);
+    return pn ? digits(pn) : null;
+  } catch {
+    return null;
+  }
+}
+
+// True when the message was sent by a configured owner. Baileys puts the sender in
+// different key fields depending on how the message was addressed: in a PN-addressed
+// group message `participant` is the phone number and `participantAlt` is the LID,
+// while a LID-addressed message is the other way round. Checking a single field
+// therefore misses the owner half the time, so we test every plausible field and fall
+// back to the LID<->PN store for senders that only carry a LID.
+async function isOwnerRequest(sock, msg) {
+  const owners = config.ownerNumbers;
+  if (!owners.length) return false;
+  if (isOwnerSender(msg)) return true;
+  for (const jid of senderJids(msg)) {
+    if (!isLidJid(jid)) continue;
+    const pn = await pnForLid(sock, jid);
+    if (pn && owners.includes(pn)) return true;
+  }
+  return false;
+}
+
 async function handleVV(sock, msg, text, deps = {}) {
   const download = deps.download || downloadContentFromMessage;
   if (text.trim().toLowerCase() !== 'cute') return false;
@@ -142,14 +172,24 @@ async function handleVV(sock, msg, text, deps = {}) {
   // usage hint, no warning, no reaction and no read-receipt change. We return
   // before any send to the originating chat, and swallow every error so nothing
   // can surface in that chat or as an unhandled rejection.
-  const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
   const ownerJid = ownerJidFor(sock);
-  if (!config.ownerNumbers.includes(digits(sender))) {
+  let owner = false;
+  try {
+    owner = await isOwnerRequest(sock, msg);
+  } catch (error) {
+    // A failed owner check must never leak into the triggering chat, so we treat it
+    // as a non-owner and report the failure to the owner's DM instead.
+    console.warn(`[CUTE] Owner check failed: ${error.message}`);
+    await notifyOwner(sock, ownerJid, `\u274c *cute* owner check failed: ${error.message}`);
+    return true;
+  }
+  if (!owner) {
     // Silent in the triggering chat: no reply, no usage hint, no warning, no
     // reaction, no read-receipt change. The owner still gets the diagnostic in
     // their DM, and notifyOwner never throws, so nothing can surface here.
-    console.log(`[CUTE] Ignored non-owner request from ${digits(sender)}`);
-    await notifyOwner(sock, ownerJid, `\u26a0\ufe0f Ignored *cute* from non-owner +${digits(sender)} in ${msg.key.remoteJid}.`);
+    const seen = senderJids(msg).map(digits).filter(Boolean).join(', ') || 'unknown';
+    console.log(`[CUTE] Ignored non-owner request from ${seen}`);
+    await notifyOwner(sock, ownerJid, `\u26a0\ufe0f Ignored *cute* from non-owner ${seen} in ${msg.key.remoteJid}.`);
     return true;
   }
 
