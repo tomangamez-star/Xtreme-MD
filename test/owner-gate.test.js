@@ -121,7 +121,7 @@ test('owner keeps normal behaviour: the handler runs and its reply reaches the c
   assert.equal(h.sent[0].content.text, 'pong');
 });
 
-test('owner command failure is reported to the owner DM only, never the chat', async () => {
+test('a non-cute command failure is swallowed: no chat message and no owner DM', async () => {
   const h = harness({
     text: 'Xplay boom',
     runCommand: async () => { throw new Error('music api down'); }
@@ -129,9 +129,20 @@ test('owner command failure is reported to the owner DM only, never the chat', a
   assert.equal(await handleCommand(h.sock, h.msg, 'Xplay boom', h.deps), true);
 
   assert.equal(toOrigin(h).length, 0, 'the chat stays silent on failure');
+  assert.equal(h.sent.length, 0, 'only cute may report to the owner DM');
+});
+
+test('a cute command failure is still reported to the owner DM only', async () => {
+  const h = harness({
+    text: 'Xcute',
+    runCommand: async () => { throw new Error('download exploded'); }
+  });
+  assert.equal(await handleCommand(h.sock, h.msg, 'Xcute', h.deps), true);
+
+  assert.equal(toOrigin(h).length, 0, 'the chat stays silent on failure');
   assert.equal(h.sent.length, 1);
   assert.equal(h.sent[0].jid, OWNER_JID);
-  assert.match(h.sent[0].content.text, /music api down/);
+  assert.match(h.sent[0].content.text, /download exploded/);
 });
 
 test('a throwing owner check stays silent in the chat and reports to the owner DM', async () => {

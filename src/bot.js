@@ -28,6 +28,49 @@ const getConnectionInfo = () => ({
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// --- Transient-error detection & throttle backoff ---------------------------
+// WhatsApp throttling ("rate-overlimit", HTTP 429, a stream error carrying 429) is
+// not a real failure: it is the server asking us to slow down. These must never be
+// reported to the owner, and repeated hits must not cause a tight retry loop.
+const THROTTLE_BASE_MS = 1000;
+const THROTTLE_MAX_MS = 30000;
+let throttleUntil = 0;
+let throttleStreak = 0;
+
+// True for throttling / rate-limit errors from Baileys, the socket layer or fetch.
+// Checks the numeric status fields first, then the message text, so it catches both
+// `{ output: { statusCode: 429 } }` and a bare `Error('rate-overlimit')`.
+function isTransientError(error) {
+  if (!error) return false;
+  const codes = [
+    error.status, error.statusCode, error.code,
+    error.output?.statusCode, error.data?.status, error.attrs?.code
+  ];
+  if (codes.some(code => Number(code) === 429)) return true;
+  const text = [
+    error.message, error.name, error.type,
+    error.output?.payload?.message, error.data?.message
+  ].filter(Boolean).join(' ').toLowerCase();
+  return /rate[-_ ]?overlimit|rate[-_ ]?limit|too many requests|\b429\b/.test(text);
+}
+
+// Record a throttle hit and return the backoff delay. The delay doubles per
+// consecutive hit (1s, 2s, 4s ... capped at 30s) and resets on the next success.
+function noteThrottle() {
+  throttleStreak = Math.min(throttleStreak + 1, 6);
+  const delay = Math.min(THROTTLE_MAX_MS, THROTTLE_BASE_MS * 2 ** (throttleStreak - 1));
+  throttleUntil = Date.now() + delay;
+  return delay;
+}
+
+function resetThrottle() {
+  throttleStreak = 0;
+  throttleUntil = 0;
+}
+
+// True while we are backing off after throttling; messages are dropped meanwhile.
+const isThrottled = () => Date.now() < throttleUntil;
+
 async function createFreshPairingSocket() {
   suppressReconnectUntil = Date.now() + 120000;
   reconnecting = false;
@@ -243,6 +286,12 @@ async function handleVV(sock, msg, text, deps = {}) {
       await notifyOwner(sock, ownerJid, '\u26a0\ufe0f Sent as view-once here, but the copy to your personal chat failed.');
     }
   } catch (error) {
+    // Throttling is transient, not a failure: back off and stay silent.
+    if (isTransientError(error)) {
+      noteThrottle();
+      console.warn('[CUTE] Throttled, backing off');
+      return true;
+    }
     console.warn(`[CUTE] Failed: ${error.message}`);
     await notifyOwner(sock, ownerJid, `\u274c *cute* failed: ${error.message}`);
   }
@@ -305,10 +354,61 @@ async function handleCommand(sock, msg, text, deps = {}) {
     const metadata = deps.metadata || (msg.key.remoteJid.endsWith('@g.us') ? await sock.groupMetadata(msg.key.remoteJid) : null);
     await run(buildContext(sock, msg, parsed, metadata, started));
   } catch (error) {
-    console.error('[COMMAND]', error.message);
-    await notifyOwner(sock, ownerJid, `\u274c *${parsed.command}* failed: ${error.message}`);
+    // Only the `cute` handler may report to the owner DM. Every other command's
+    // failure is swallowed: one local log line, nothing user-visible anywhere.
+    if (isTransientError(error)) {
+      noteThrottle();
+      console.warn(`[COMMAND] ${parsed.command} throttled, backing off`);
+      return true;
+    }
+    console.warn(`[COMMAND] ${parsed.command}: ${error.message}`);
+    if (parsed.command === 'cute') {
+      await notifyOwner(sock, ownerJid, `\u274c *cute* failed: ${error.message}`);
+    }
   }
   return true;
+}
+
+// Process one incoming message. This is the single top-level error boundary for the
+// whole message path, so it decides what may ever become user-visible.
+//
+// Rule: only errors from the `cute` handler may reach the owner's DM (and handleVV
+// reports those itself). Everything else — other commands, message handling, the
+// socket layer, Baileys — is swallowed: one local log line, no DM, no chat message.
+// Throttling errors are dropped entirely and trigger a backoff instead.
+// Never throws, so nothing can surface as an unhandled rejection.
+async function handleMessage(sock, msg, deps = {}) {
+  if (!msg?.message || msg.key?.remoteJid === 'status@broadcast') return false;
+
+  // Backoff window: drop messages while throttled so we do not retry in a tight loop.
+  if (isThrottled()) return false;
+
+  try {
+    const text = textOf(msg);
+    if (await handleVV(sock, msg, text, deps)) { resetThrottle(); return true; }
+
+    const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
+    const isGroup = msg.key.remoteJid.endsWith('@g.us');
+    let metadata = deps.metadata || null;
+    if (isGroup) {
+      metadata = metadata || await sock.groupMetadata(msg.key.remoteJid);
+      if (await handleGroupProtections(sock, msg, text, metadata, sender)) { resetThrottle(); return true; }
+    }
+    // Every command goes through the central owner gate. A non-owner is ignored
+    // completely, and any failure is reported to the owner DM only.
+    await handleCommand(sock, msg, text, { ...deps, metadata });
+    resetThrottle();
+    return true;
+  } catch (error) {
+    if (isTransientError(error)) {
+      noteThrottle();
+      console.warn('[MESSAGE] Throttled, backing off');
+      return false;
+    }
+    // Swallowed: a single local log line, never a DM and never a chat message.
+    console.warn(`[MESSAGE] ${error.message}`);
+    return false;
+  }
 }
 
 async function handleGroupProtections(sock, msg, text, metadata, sender) {
@@ -395,24 +495,9 @@ async function startBot() {
   sock.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify') return;
     for (const msg of messages) {
-      if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue;
-      try {
-        const text = textOf(msg);
-        if (await handleVV(sock, msg, text)) continue;
-        const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
-        const isGroup = msg.key.remoteJid.endsWith('@g.us');
-        let metadata = null;
-        if (isGroup) {
-          metadata = await sock.groupMetadata(msg.key.remoteJid);
-          if (await handleGroupProtections(sock, msg, text, metadata, sender)) continue;
-        }
-        // Every command goes through the central owner gate. A non-owner is ignored
-        // completely, and any failure is reported to the owner DM only.
-        await handleCommand(sock, msg, text, { metadata });
-      } catch (error) {
-        console.error('[MESSAGE]', error.message);
-        await notifyOwner(sock, ownerJidFor(sock), `❌ Message handling failed: ${error.message}`);
-      }
+      // handleMessage owns the error boundary: it never throws and never reports
+      // anything to the owner except errors from the `cute` handler.
+      await handleMessage(sock, msg);
     }
   });
   return sock;
@@ -432,4 +517,8 @@ function scheduleReconnect(delayMs) {
   }, delayMs);
 }
 
-module.exports = { startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession, handleVV, handleCommand, buildContext };
+module.exports = {
+  startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession,
+  handleVV, handleCommand, handleMessage, buildContext,
+  isTransientError, noteThrottle, resetThrottle, isThrottled
+};
