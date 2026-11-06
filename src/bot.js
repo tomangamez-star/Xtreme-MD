@@ -9,7 +9,7 @@ const {
 const config = require('../config');
 const { initDb, restoreAuth, backupAuth, getSetting, clearAuth } = require('./db');
 const { textOf, parseCommand, digits, isOwner, isLidJid, senderJids, isOwnerSender, quotedMessage } = require('./utils');
-const { runCommand, reply } = require('./commands');
+const { runCommand } = require('./commands');
 const { buildWelcomeCard } = require('./welcome-card');
 
 let status = 'starting';
@@ -249,6 +249,68 @@ async function handleVV(sock, msg, text, deps = {}) {
   return true;
 }
 
+// Build the context object every command handler receives. Kept separate from the
+// dispatch path so the owner gate can run before any of this work happens.
+function buildContext(sock, msg, parsed, metadata, started) {
+  const isGroup = msg.key.remoteJid.endsWith('@g.us');
+  const participants = metadata?.participants || [];
+  const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
+  const botJid = sock.user?.id;
+  const same = (a, b) => Boolean(a) && Boolean(b) && digits(a) === digits(b);
+  return {
+    sock, msg, ...parsed, sender, started, isGroup, participants,
+    mentions: msg.message?.extendedTextMessage?.contextInfo?.mentionedJid || [],
+    isAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => same(j, sender) || same(j, msg.key.participant))),
+    isBotAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => same(j, botJid) || same(j, sock.user?.lid)))
+  };
+}
+
+// The single owner gate every command passes through. It runs before dispatch, so a
+// new command is covered automatically without touching its handler.
+//
+// Non-owner: absolutely nothing is sent to the originating chat — no error, no usage
+// hint, no "owner only" notice, no reaction, no read-receipt change. We return before
+// any send to that chat; the only output is a diagnostic to the owner's DM.
+// Owner: the command runs exactly as before, and any failure is reported to the owner
+// DM instead of the chat where the command was used.
+//
+// Returns true when the message was consumed (blocked, run, or failed) and false when
+// it is not a command at all. Never throws: notifyOwner swallows its own errors.
+async function handleCommand(sock, msg, text, deps = {}) {
+  const parsed = parseCommand(text);
+  if (!parsed) return false;
+
+  const run = deps.runCommand || runCommand;
+  const ownerJid = ownerJidFor(sock);
+
+  let owner = false;
+  try {
+    owner = await isOwnerRequest(sock, msg);
+  } catch (error) {
+    // A failed owner check must never leak into the triggering chat.
+    console.warn(`[GUARD] Owner check failed: ${error.message}`);
+    await notifyOwner(sock, ownerJid, `\u274c Owner check failed for *${parsed.command}*: ${error.message}`);
+    return true;
+  }
+
+  if (!owner) {
+    const seen = senderJids(msg).map(digits).filter(Boolean).join(', ') || 'unknown';
+    console.log(`[GUARD] Ignored non-owner *${parsed.command}* from ${seen}`);
+    await notifyOwner(sock, ownerJid, `\u26a0\ufe0f Ignored *${parsed.command}* from non-owner ${seen} in ${msg.key.remoteJid}.`);
+    return true;
+  }
+
+  try {
+    const started = deps.started || Date.now();
+    const metadata = deps.metadata || (msg.key.remoteJid.endsWith('@g.us') ? await sock.groupMetadata(msg.key.remoteJid) : null);
+    await run(buildContext(sock, msg, parsed, metadata, started));
+  } catch (error) {
+    console.error('[COMMAND]', error.message);
+    await notifyOwner(sock, ownerJid, `\u274c *${parsed.command}* failed: ${error.message}`);
+  }
+  return true;
+}
+
 async function handleGroupProtections(sock, msg, text, metadata, sender) {
   const jid = msg.key.remoteJid;
   const mode = await getSetting(`antilink:${jid}`, 'off');
@@ -335,24 +397,21 @@ async function startBot() {
     for (const msg of messages) {
       if (!msg.message || msg.key.remoteJid === 'status@broadcast') continue;
       try {
-        const started = Date.now();
-        const text = textOf(msg); const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
+        const text = textOf(msg);
         if (await handleVV(sock, msg, text)) continue;
+        const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
         const isGroup = msg.key.remoteJid.endsWith('@g.us');
-        let metadata = null, participants = [];
+        let metadata = null;
         if (isGroup) {
           metadata = await sock.groupMetadata(msg.key.remoteJid);
-          participants = metadata.participants;
           if (await handleGroupProtections(sock, msg, text, metadata, sender)) continue;
         }
-        const parsed = parseCommand(text); if (!parsed) continue;
-        if (!config.publicMode && !isOwner(sender)) continue;
-        const botJid = sock.user.id;
-        const context = { sock, msg, ...parsed, sender: msg.key.participantAlt || sender, started, isGroup, participants, mentions: msg.message.extendedTextMessage?.contextInfo?.mentionedJid || [], isAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => [sender, msg.key.participant].filter(Boolean).some(s => digits(j) === digits(s)))), isBotAdmin: participants.some(p => p.admin && [p.id, p.phoneNumber, p.lid].filter(Boolean).some(j => [botJid, sock.user.lid].filter(Boolean).some(b => digits(j) === digits(b)))) };
-        await runCommand(context);
+        // Every command goes through the central owner gate. A non-owner is ignored
+        // completely, and any failure is reported to the owner DM only.
+        await handleCommand(sock, msg, text, { metadata });
       } catch (error) {
         console.error('[MESSAGE]', error.message);
-        await reply(sock, msg, '❌ That command failed. Try again shortly.').catch(() => {});
+        await notifyOwner(sock, ownerJidFor(sock), `❌ Message handling failed: ${error.message}`);
       }
     }
   });
@@ -373,4 +432,4 @@ function scheduleReconnect(delayMs) {
   }, delayMs);
 }
 
-module.exports = { startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession, handleVV };
+module.exports = { startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession, handleVV, handleCommand, buildContext };
