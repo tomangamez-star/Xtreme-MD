@@ -114,7 +114,8 @@ async function unwrapMessage(message) {
   return current;
 }
 
-async function handleVV(sock, msg, text) {
+async function handleVV(sock, msg, text, deps = {}) {
+  const download = deps.download || downloadContentFromMessage;
   if (text.trim().toLowerCase() !== 'cute') return false;
   const q = quotedMessage(msg);
   if (!q) {
@@ -130,7 +131,7 @@ async function handleVV(sock, msg, text) {
 
   const media = content[type];
   const mediaType = type.replace('Message', '');
-  const stream = await downloadContentFromMessage(media, mediaType);
+  const stream = await download(media, mediaType);
   const chunks = [];
   for await (const chunk of stream) chunks.push(chunk);
   const buffer = Buffer.concat(chunks);
@@ -140,16 +141,34 @@ async function handleVV(sock, msg, text) {
     return true;
   }
 
-  const destination = selfJid.includes('@') ? selfJid : `${digits(selfJid)}@s.whatsapp.net`;
-  let payload;
-  if (mediaType === 'audio') {
-    payload = { audio: buffer, mimetype: media.mimetype || 'audio/mpeg', ptt: Boolean(media.ptt) };
-  } else {
-    payload = { [mediaType]: buffer };
+  // Build the media payload once, then send it twice in two different forms.
+  const buildPayload = () => {
+    if (mediaType === 'audio') {
+      return { audio: buffer, mimetype: media.mimetype || 'audio/mpeg', ptt: Boolean(media.ptt) };
+    }
+    const payload = { [mediaType]: buffer };
     if (media.caption) payload.caption = media.caption;
     else if (mediaType === 'image' || mediaType === 'video') payload.caption = 'Recovered with Xtreme MD';
+    return payload;
+  };
+
+  // 1) View-once copy in the chat where the command was used.
+  //    Baileys wraps any payload carrying `viewOnce: true` in a viewOnceMessage
+  //    envelope, so the recipient can open it exactly once and it then disappears.
+  const chatJid = msg.key.remoteJid;
+  await sock.sendMessage(chatJid, { ...buildPayload(), viewOnce: true }, { quoted: msg });
+
+  // 2) Normal, permanently viewable copy in the owner's personal chat.
+  //    A failure here must never break the command that already succeeded above.
+  const ownerJid = config.ownerNumbers.length
+    ? `${config.ownerNumbers[0]}@s.whatsapp.net`
+    : (selfJid.includes('@') ? selfJid : `${digits(selfJid)}@s.whatsapp.net`);
+  try {
+    await sock.sendMessage(ownerJid, buildPayload());
+  } catch (error) {
+    console.warn(`[CUTE] Personal-chat copy failed: ${error.message}`);
+    await reply(sock, msg, '\u26a0\ufe0f Sent as view-once here, but the copy to your personal chat failed.').catch(() => {});
   }
-  await sock.sendMessage(destination, payload);
   return true;
 }
 
@@ -277,4 +296,4 @@ function scheduleReconnect(delayMs) {
   }, delayMs);
 }
 
-module.exports = { startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession };
+module.exports = { startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession, handleVV };
