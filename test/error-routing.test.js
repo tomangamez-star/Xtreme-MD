@@ -209,11 +209,11 @@ test('repeated throttling backs off exponentially and caps out', () => {
   assert.equal(isThrottled(), false, 'a success clears the backoff');
 });
 
-test('messages are dropped while throttled, then resume after the backoff', async () => {
+test('a non-owner message is dropped while throttled, then resumes after the backoff', async () => {
   resetThrottle();
   noteThrottle();
 
-  const h = harness({ text: 'Xping' });
+  const h = harness({ text: 'Xping', sender: STRANGER });
   await handleMessage(h.sock, h.msg, {
     runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
   });
@@ -224,6 +224,159 @@ test('messages are dropped while throttled, then resume after the backoff', asyn
     runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
   });
   assert.equal(h.sent.length, 1, 'resumes once the backoff clears');
+  resetThrottle();
+});
+
+// --- The owner is never blocked by the throttle guard -----------------------
+
+test('the owner is not blocked while throttled: the command still runs', async () => {
+  resetThrottle();
+  noteThrottle();
+  assert.equal(isThrottled(), true, 'we really are inside the backoff window');
+
+  const h = harness({ text: 'Xping' });
+  await handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+  });
+
+  assert.equal(toOrigin(h).length, 1, 'the owner reply reaches the chat even while throttled');
+  assert.equal(h.sent[0].content.text, 'pong');
+  resetThrottle();
+});
+
+test('the owner is not blocked while throttled in any sender format', async () => {
+  const formats = [
+    ['plain digits', { participant: `${OWNER}@s.whatsapp.net` }],
+    ['with a leading +', { participant: `+${OWNER}@s.whatsapp.net` }],
+    ['as a full JID', { participant: `${OWNER}@s.whatsapp.net` }],
+    ['with a device suffix', { participant: `${OWNER}:12@s.whatsapp.net` }],
+    ['in participantAlt only', { participant: `${STRANGER}@s.whatsapp.net`, participantAlt: `${OWNER}@s.whatsapp.net` }],
+    ['in remoteJidAlt only', { participant: `${STRANGER}@s.whatsapp.net`, remoteJidAlt: `${OWNER}@s.whatsapp.net` }]
+  ];
+
+  for (const [label, key] of formats) {
+    resetThrottle();
+    noteThrottle();
+    const h = harness({ text: 'Xping', sender: STRANGER, key });
+    await handleMessage(h.sock, h.msg, {
+      runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+    });
+    assert.equal(toOrigin(h).length, 1, `owner recognised ${label} and not blocked while throttled`);
+  }
+  resetThrottle();
+});
+
+test('the owner is not blocked while throttled when the sender is a LID', async () => {
+  resetThrottle();
+  noteThrottle();
+
+  const h = harness({
+    text: 'Xping',
+    sender: STRANGER,
+    key: { participant: '111222333444555@lid', participantAlt: '111222333444555@lid' }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => `${OWNER}@s.whatsapp.net`;
+
+  await handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+  });
+
+  assert.equal(toOrigin(h).length, 1, 'the LID owner is recognised and not blocked');
+  resetThrottle();
+});
+
+// --- The owner's command output is delivered to the owner DM ----------------
+
+test("the owner's command result is delivered to the owner DM", async () => {
+  resetThrottle();
+  const h = harness({ text: 'Xping' });
+  await handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+  });
+
+  assert.equal(toOrigin(h).length, 1, 'the normal reply still reaches the chat');
+  assert.equal(toOwner(h).length, 1, "the result is also delivered to the owner's DM");
+  assert.equal(toOwner(h)[0].content.text, 'pong');
+  resetThrottle();
+});
+
+test("the owner's command result reaches the owner DM in every sender format", async () => {
+  const formats = [
+    ['plain digits', { participant: `${OWNER}@s.whatsapp.net` }],
+    ['with a leading +', { participant: `+${OWNER}@s.whatsapp.net` }],
+    ['as a full JID', { participant: `${OWNER}@s.whatsapp.net` }],
+    ['with a device suffix', { participant: `${OWNER}:12@s.whatsapp.net` }],
+    ['in participantAlt only', { participant: `${STRANGER}@s.whatsapp.net`, participantAlt: `${OWNER}@s.whatsapp.net` }],
+    ['in remoteJidAlt only', { participant: `${STRANGER}@s.whatsapp.net`, remoteJidAlt: `${OWNER}@s.whatsapp.net` }]
+  ];
+
+  for (const [label, key] of formats) {
+    resetThrottle();
+    const h = harness({ text: 'Xping', sender: STRANGER, key });
+    await handleMessage(h.sock, h.msg, {
+      runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+    });
+    assert.equal(toOwner(h).length, 1, `owner DM copy delivered for ${label}`);
+    assert.equal(toOwner(h)[0].content.text, 'pong');
+  }
+  resetThrottle();
+});
+
+test("the owner's command result reaches the owner DM when the sender is a LID", async () => {
+  resetThrottle();
+  const h = harness({
+    text: 'Xping',
+    sender: STRANGER,
+    key: { participant: '111222333444555@lid', participantAlt: '111222333444555@lid' }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => `${OWNER}@s.whatsapp.net`;
+
+  await handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+  });
+
+  assert.equal(toOwner(h).length, 1, 'the LID owner gets the DM copy');
+  resetThrottle();
+});
+
+test('a non-owner command result is never mirrored to the owner DM', async () => {
+  resetThrottle();
+  const h = harness({ text: 'Xping', sender: STRANGER });
+  await handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+  });
+
+  assert.equal(toOrigin(h).length, 0, 'the chat stays silent');
+  assert.equal(h.sent.length, 1, 'only the ignored notice is sent');
+  assert.match(h.sent[0].content.text, /non-owner/i);
+  resetThrottle();
+});
+
+test('the owner mirror does not duplicate a send that already targets the owner DM', async () => {
+  resetThrottle();
+  const h = harness({ text: 'Xping' });
+  await handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock }) => { await sock.sendMessage(OWNER_JID, { text: 'direct' }); }
+  });
+
+  assert.equal(toOwner(h).length, 1, 'the direct owner DM is not duplicated');
+  resetThrottle();
+});
+
+test('the owner mirror never breaks the command when the DM copy fails', async () => {
+  resetThrottle();
+  const h = harness({ text: 'Xping' });
+  const original = h.sock.sendMessage;
+  h.sock.sendMessage = async (jid, content, options) => {
+    if (jid === OWNER_JID) throw new Error('dm blocked');
+    return original(jid, content, options);
+  };
+
+  await assert.doesNotReject(() => handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+  }));
+
+  assert.equal(toOrigin(h).length, 1, 'the chat reply still went out');
   resetThrottle();
 });
 

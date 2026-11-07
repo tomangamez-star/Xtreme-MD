@@ -207,6 +207,42 @@ async function isOwnerRequest(sock, msg) {
   return false;
 }
 
+// Resolve whether this message came from the owner, reusing an already-resolved
+// result when the caller passes one. Returns `{ owner, error }`: `error` is set when
+// the check itself failed, so the caller can report it to the owner's DM instead of
+// leaking anything into the triggering chat.
+async function ownerOf(sock, msg, deps = {}) {
+  if (typeof deps.owner === 'boolean') return { owner: deps.owner, error: deps.ownerError || null };
+  try {
+    return { owner: await isOwnerRequest(sock, msg), error: null };
+  } catch (error) {
+    return { owner: false, error };
+  }
+}
+
+// Run the owner's command with its output mirrored to the owner's personal chat.
+// The handler still replies in the chat where the command was used (unchanged), and
+// every message it sends to that chat is copied to the owner's DM — the same
+// destination the `cute` command's recovered media and errors use — so the result is
+// never lost. Sends that already target the owner DM, reactions and deletions are not
+// duplicated. The socket is always restored, and a failed mirror never breaks the
+// command that already succeeded.
+async function runWithOwnerMirror(sock, msg, ownerJid, run) {
+  const origin = msg.key.remoteJid;
+  if (!ownerJid || origin === ownerJid) return run();
+  const original = sock.sendMessage.bind(sock);
+  sock.sendMessage = async (jid, content, options) => {
+    const result = await original(jid, content, options);
+    if (jid === origin && !content?.react && !content?.delete) {
+      try { await original(ownerJid, content); }
+      catch (error) { console.warn(`[GUARD] Owner mirror failed: ${error.message}`); }
+    }
+    return result;
+  };
+  try { return await run(); }
+  finally { sock.sendMessage = original; }
+}
+
 async function handleVV(sock, msg, text, deps = {}) {
   const download = deps.download || downloadContentFromMessage;
   if (text.trim().toLowerCase() !== 'cute') return false;
@@ -216,14 +252,12 @@ async function handleVV(sock, msg, text, deps = {}) {
   // before any send to the originating chat, and swallow every error so nothing
   // can surface in that chat or as an unhandled rejection.
   const ownerJid = ownerJidFor(sock);
-  let owner = false;
-  try {
-    owner = await isOwnerRequest(sock, msg);
-  } catch (error) {
+  const { owner, error: ownerError } = await ownerOf(sock, msg, deps);
+  if (ownerError) {
     // A failed owner check must never leak into the triggering chat, so we treat it
     // as a non-owner and report the failure to the owner's DM instead.
-    console.warn(`[CUTE] Owner check failed: ${error.message}`);
-    await notifyOwner(sock, ownerJid, `\u274c *cute* owner check failed: ${error.message}`);
+    console.warn(`[CUTE] Owner check failed: ${ownerError.message}`);
+    await notifyOwner(sock, ownerJid, `\u274c *cute* owner check failed: ${ownerError.message}`);
     return true;
   }
   if (!owner) {
@@ -332,13 +366,11 @@ async function handleCommand(sock, msg, text, deps = {}) {
   const run = deps.runCommand || runCommand;
   const ownerJid = ownerJidFor(sock);
 
-  let owner = false;
-  try {
-    owner = await isOwnerRequest(sock, msg);
-  } catch (error) {
+  const { owner, error: ownerError } = await ownerOf(sock, msg, deps);
+  if (ownerError) {
     // A failed owner check must never leak into the triggering chat.
-    console.warn(`[GUARD] Owner check failed: ${error.message}`);
-    await notifyOwner(sock, ownerJid, `\u274c Owner check failed for *${parsed.command}*: ${error.message}`);
+    console.warn(`[GUARD] Owner check failed: ${ownerError.message}`);
+    await notifyOwner(sock, ownerJid, `\u274c Owner check failed for *${parsed.command}*: ${ownerError.message}`);
     return true;
   }
 
@@ -352,7 +384,11 @@ async function handleCommand(sock, msg, text, deps = {}) {
   try {
     const started = deps.started || Date.now();
     const metadata = deps.metadata || (msg.key.remoteJid.endsWith('@g.us') ? await sock.groupMetadata(msg.key.remoteJid) : null);
-    await run(buildContext(sock, msg, parsed, metadata, started));
+    const context = buildContext(sock, msg, parsed, metadata, started);
+    // The owner's command output is mirrored to their personal chat — the same
+    // destination the `cute` command's recovered media and errors use — so the
+    // result is never lost, while the normal reply still reaches the chat.
+    await runWithOwnerMirror(sock, msg, ownerJid, () => run(context));
   } catch (error) {
     // Only the `cute` handler may report to the owner DM. Every other command's
     // failure is swallowed: one local log line, nothing user-visible anywhere.
@@ -375,17 +411,23 @@ async function handleCommand(sock, msg, text, deps = {}) {
 // Rule: only errors from the `cute` handler may reach the owner's DM (and handleVV
 // reports those itself). Everything else — other commands, message handling, the
 // socket layer, Baileys — is swallowed: one local log line, no DM, no chat message.
-// Throttling errors are dropped entirely and trigger a backoff instead.
+// Throttling errors are dropped entirely and trigger a backoff instead, but the
+// owner is never blocked by that backoff: their commands always run.
 // Never throws, so nothing can surface as an unhandled rejection.
 async function handleMessage(sock, msg, deps = {}) {
   if (!msg?.message || msg.key?.remoteJid === 'status@broadcast') return false;
 
-  // Backoff window: drop messages while throttled so we do not retry in a tight loop.
-  if (isThrottled()) return false;
+  // Resolve the owner once, up front: the backoff must never block the owner, and
+  // the gate below reuses this result instead of resolving the sender twice.
+  const { owner, error: ownerError } = await ownerOf(sock, msg, deps);
+
+  // Backoff window: drop messages while throttled so we do not retry in a tight
+  // loop. The owner is exempt — their commands always run, even while throttled.
+  if (isThrottled() && !owner) return false;
 
   try {
     const text = textOf(msg);
-    if (await handleVV(sock, msg, text, deps)) { resetThrottle(); return true; }
+    if (await handleVV(sock, msg, text, { ...deps, owner, ownerError })) { resetThrottle(); return true; }
 
     const sender = msg.key.participantAlt || msg.key.participant || msg.key.remoteJid;
     const isGroup = msg.key.remoteJid.endsWith('@g.us');
@@ -396,7 +438,7 @@ async function handleMessage(sock, msg, deps = {}) {
     }
     // Every command goes through the central owner gate. A non-owner is ignored
     // completely, and any failure is reported to the owner DM only.
-    await handleCommand(sock, msg, text, { ...deps, metadata });
+    await handleCommand(sock, msg, text, { ...deps, metadata, owner, ownerError });
     resetThrottle();
     return true;
   } catch (error) {
@@ -520,5 +562,6 @@ function scheduleReconnect(delayMs) {
 module.exports = {
   startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession,
   handleVV, handleCommand, handleMessage, buildContext,
+  ownerOf, runWithOwnerMirror, ownerJidFor,
   isTransientError, noteThrottle, resetThrottle, isThrottled
 };
