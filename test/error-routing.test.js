@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   handleMessage, handleCommand, handleVV,
-  isTransientError, noteThrottle, resetThrottle, isThrottled
+  isTransientError, noteThrottle, resetThrottle, isThrottled, resetOwnerLidCache
 } = require('../src/bot');
 const config = require('../config');
 
@@ -283,6 +283,30 @@ test('the owner is not blocked while throttled when the sender is a LID', async 
 
   assert.equal(toOrigin(h).length, 1, 'the LID owner is recognised and not blocked');
   resetThrottle();
+});
+
+test('the owner is not blocked while throttled when the message is LID-addressed and carries only the owner LID', async () => {
+  resetThrottle();
+  resetOwnerLidCache();
+  noteThrottle();
+
+  const h = harness({
+    text: 'Xping',
+    sender: STRANGER,
+    key: { remoteJid: '111222333444555@lid', participant: '111222333444555@lid', participantAlt: `${STRANGER}@s.whatsapp.net` }
+  });
+  h.sock.signalRepository.lidMapping.getLIDForPN = async pn => pn === `${OWNER}@s.whatsapp.net` ? '111222333444555@lid' : null;
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+
+  await handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+  });
+
+  const lidChat = h.sent.filter(s => s.jid === '111222333444555@lid');
+  assert.equal(lidChat.length, 1, 'the LID-only owner is recognised and not blocked while throttled');
+  assert.equal(lidChat[0].content.text, 'pong');
+  resetThrottle();
+  resetOwnerLidCache();
 });
 
 // --- The owner's command output is delivered to the owner DM ----------------

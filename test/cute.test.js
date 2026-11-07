@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { handleVV } = require('../src/bot');
+const { handleVV, resetOwnerLidCache } = require('../src/bot');
 const config = require('../config');
 
 // Injected downloader: no network, no real WhatsApp media.
@@ -198,4 +198,31 @@ test('cute ignores non-cute text entirely', async () => {
   const h = harness({ quoted: viewOnceImage });
   assert.equal(await handleVV(h.sock, h.msg, 'hello', deps), false);
   assert.equal(h.sent.length, 0);
+});
+
+// The reported bug: a LID-addressed message carries only the owner's LID (plus a
+// non-owner phone number in the alternate fields), so the owner is recognised by
+// resolving their LID from the number we already trust (PN -> LID).
+test('owner recognised for cute when the message is LID-addressed and carries only the owner LID', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    quoted: viewOnceImage,
+    sender: STRANGER,
+    key: {
+      remoteJid: OWNER_LID,
+      participant: OWNER_LID,
+      participantAlt: `${STRANGER}@s.whatsapp.net`
+    }
+  });
+  h.sock.signalRepository.lidMapping.getLIDForPN = async pn => pn === `${OWNER}@s.whatsapp.net` ? OWNER_LID : null;
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+
+  assert.equal(await handleVV(h.sock, h.msg, 'cute', deps), true);
+  assert.equal(h.sent.length, 2, 'owner gets exactly two sends');
+  const [first, second] = h.sent;
+  assert.equal(first.jid, OWNER_LID, 'view-once goes to the LID chat where the command was used');
+  assert.equal(first.content.viewOnce, true, 'first send is view-once');
+  assert.equal(second.jid, OWNER_JID, 'normal copy goes to the owner personal chat');
+  assert.equal(second.content.viewOnce, undefined, 'DM copy is NOT view-once');
+  resetOwnerLidCache();
 });

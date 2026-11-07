@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { handleCommand, buildContext } = require('../src/bot');
+const { handleCommand, buildContext, resetOwnerLidCache } = require('../src/bot');
 const config = require('../config');
 
 const OWNER = config.ownerNumbers[0];
@@ -189,4 +189,63 @@ test('buildContext exposes the fields handlers rely on', () => {
   assert.deepEqual(ctx.mentions, []);
   assert.equal(ctx.isAdmin, false);
   assert.equal(ctx.isBotAdmin, false);
+});
+
+// --- The reported bug: a LID-addressed message carries only the owner's LID ------
+// The owner's real number never appears in the sender fields (only a LID plus a
+// non-owner phone number in the alternate fields), so the only way to recognise the
+// owner is to resolve their LID from the number we already trust (PN -> LID).
+
+test('owner recognised when the message is LID-addressed and carries only the owner LID', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    text: 'Xping',
+    sender: STRANGER,
+    key: {
+      remoteJid: OWNER_LID,
+      participant: OWNER_LID,
+      participantAlt: `${STRANGER}@s.whatsapp.net`
+    }
+  });
+  // The store resolves the owner's PN -> LID; the reverse (LID -> PN) is stale/absent.
+  h.sock.signalRepository.lidMapping.getLIDForPN = async pn => pn === `${OWNER}@s.whatsapp.net` ? OWNER_LID : null;
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+
+  assert.equal(await handleCommand(h.sock, h.msg, 'Xping', h.deps), true);
+  assert.equal(h.ran.length, 1, 'the owner command runs');
+  assert.equal(h.ran[0].command, 'ping');
+  assert.equal(h.sent.length, 0, 'the guard itself sends nothing for a successful owner command');
+  resetOwnerLidCache();
+});
+
+test('owner recognised via a device-suffixed LID', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    text: 'Xping',
+    sender: STRANGER,
+    key: { participant: `${OWNER_LID.split('@')[0]}:12@lid`, participantAlt: `${STRANGER}@s.whatsapp.net` }
+  });
+  h.sock.signalRepository.lidMapping.getLIDForPN = async pn => pn === `${OWNER}@s.whatsapp.net` ? OWNER_LID : null;
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+
+  assert.equal(await handleCommand(h.sock, h.msg, 'Xping', h.deps), true);
+  assert.equal(h.ran.length, 1, 'the owner command runs');
+  resetOwnerLidCache();
+});
+
+test('a genuine non-owner LID is still ignored even when the store knows the owner LID', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    text: 'Xping',
+    sender: STRANGER,
+    key: { participant: STRANGER_LID, participantAlt: STRANGER_LID }
+  });
+  h.sock.signalRepository.lidMapping.getLIDForPN = async pn => pn === `${OWNER}@s.whatsapp.net` ? OWNER_LID : null;
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+
+  assert.equal(await handleCommand(h.sock, h.msg, 'Xping', h.deps), true);
+  assert.equal(h.ran.length, 0, 'the non-owner command never runs');
+  assert.equal(h.sent.length, 1, 'only the ignored notice is sent');
+  assert.equal(h.sent[0].jid, OWNER_JID);
+  resetOwnerLidCache();
 });

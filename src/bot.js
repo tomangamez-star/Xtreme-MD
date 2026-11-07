@@ -189,18 +189,50 @@ async function pnForLid(sock, jid) {
   }
 }
 
+// Resolve each owner number to its LID through the store (PN -> LID). This is the
+// authoritative direction: a LID-addressed message from the owner carries only the
+// LID, and the reverse (LID -> PN) mapping may be stale or absent, so we look the
+// owner's LID up from the number we already trust. Non-empty results are cached for
+// a few minutes so we do not hit the store (or USync) on every message; empty
+// results are not cached so a later successful lookup is not masked.
+let ownerLidCache = { at: 0, lids: new Set() };
+const OWNER_LID_TTL_MS = 5 * 60 * 1000;
+
+async function ownerLidsFor(sock, owners) {
+  if (Date.now() - ownerLidCache.at < OWNER_LID_TTL_MS) return ownerLidCache.lids;
+  const lids = new Set();
+  const store = sock?.signalRepository?.lidMapping;
+  if (store?.getLIDForPN) {
+    for (const owner of owners) {
+      try {
+        const lid = await store.getLIDForPN(`${owner}@s.whatsapp.net`);
+        if (lid) lids.add(digits(lid));
+      } catch { /* store unavailable: fall back to the other checks */ }
+    }
+  }
+  if (lids.size) ownerLidCache = { at: Date.now(), lids };
+  return lids;
+}
+
+function resetOwnerLidCache() { ownerLidCache = { at: 0, lids: new Set() }; }
+
 // True when the message was sent by a configured owner. Baileys puts the sender in
 // different key fields depending on how the message was addressed: in a PN-addressed
 // group message `participant` is the phone number and `participantAlt` is the LID,
-// while a LID-addressed message is the other way round. Checking a single field
-// therefore misses the owner half the time, so we test every plausible field and fall
-// back to the LID<->PN store for senders that only carry a LID.
+// while a LID-addressed message is the other way round. A LID-addressed message may
+// carry no phone number at all, so we also resolve the owner's own LID (PN -> LID)
+// and accept it, and fall back to the LID<->PN store for any LID we see.
 async function isOwnerRequest(sock, msg) {
   const owners = config.ownerNumbers;
   if (!owners.length) return false;
   if (isOwnerSender(msg)) return true;
+
+  const ownerLids = await ownerLidsFor(sock, owners);
   for (const jid of senderJids(msg)) {
     if (!isLidJid(jid)) continue;
+    // 1) the LID itself is one of the owner's LIDs
+    if (ownerLids.has(digits(jid))) return true;
+    // 2) the LID resolves to an owner number via the store
     const pn = await pnForLid(sock, jid);
     if (pn && owners.includes(pn)) return true;
   }
@@ -563,5 +595,6 @@ module.exports = {
   startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession,
   handleVV, handleCommand, handleMessage, buildContext,
   ownerOf, runWithOwnerMirror, ownerJidFor,
-  isTransientError, noteThrottle, resetThrottle, isThrottled
+  isTransientError, noteThrottle, resetThrottle, isThrottled,
+  resetOwnerLidCache
 };

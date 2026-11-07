@@ -2,7 +2,10 @@ const { jidNormalizedUser, getContentType } = require('@whiskeysockets/baileys')
 const config = require('../config');
 
 const digits = jid => String(jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
-const isLidJid = jid => /@lid$/i.test(String(jid || '').split(':')[0]);
+// A LID JID is `user@lid` or `user:device@lid` (also `@hosted.lid`). The device
+// suffix must be stripped before testing the domain, or a device-suffixed LID is
+// wrongly treated as a phone number.
+const isLidJid = jid => /@(?:hosted\.)?lid$/i.test(String(jid || '').split(':').pop());
 const isOwner = jid => [...config.ownerNumbers, ...config.sudoNumbers].includes(digits(jid));
 
 // Every JID-ish field a Baileys message key can carry the sender in. `participantAlt`
