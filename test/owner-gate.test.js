@@ -249,3 +249,94 @@ test('a genuine non-owner LID is still ignored even when the store knows the own
   assert.equal(h.sent[0].jid, OWNER_JID);
   resetOwnerLidCache();
 });
+
+// --- The reported bug: the owner's LID is a different number space --------------
+// A LID-addressed message carries only the LID (plus a foreign phone number in the
+// alternate field). A LID's digits are NOT a phone number, so comparing them to
+// 2349110799878 could never match. The owner's LID is pinned in config and accepted.
+
+const OWNER_LID_PINNED = `${config.ownerLids[0]}@lid`;
+const FOREIGN = '2347074455500';
+
+test('the exact reported key is treated as the owner and the command runs', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    text: 'Xping',
+    sender: FOREIGN,
+    key: {
+      remoteJid: OWNER_LID_PINNED,
+      participant: OWNER_LID_PINNED,
+      participantAlt: `${FOREIGN}@s.whatsapp.net`
+    }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  assert.equal(await handleCommand(h.sock, h.msg, 'Xping', h.deps), true);
+  assert.equal(h.ran.length, 1, 'the owner command runs');
+  assert.equal(h.ran[0].command, 'ping');
+  assert.equal(h.sent.length, 0, 'no ignored notice is sent');
+  resetOwnerLidCache();
+});
+
+test('the owner LID passes in every LID field position', async () => {
+  const positions = [
+    ['remoteJid only', { remoteJid: OWNER_LID_PINNED, participant: `${FOREIGN}@s.whatsapp.net` }],
+    ['participant only', { participant: OWNER_LID_PINNED, participantAlt: `${FOREIGN}@s.whatsapp.net` }],
+    ['participantAlt only', { participant: `${FOREIGN}@s.whatsapp.net`, participantAlt: OWNER_LID_PINNED }],
+    ['remoteJidAlt only', { participant: `${FOREIGN}@s.whatsapp.net`, remoteJidAlt: OWNER_LID_PINNED }],
+    ['senderLid only', { participant: `${FOREIGN}@s.whatsapp.net`, senderLid: OWNER_LID_PINNED }],
+    ['participantLid only', { participant: `${FOREIGN}@s.whatsapp.net`, participantLid: OWNER_LID_PINNED }]
+  ];
+
+  for (const [label, key] of positions) {
+    resetOwnerLidCache();
+    const h = harness({ text: 'Xping', sender: FOREIGN, key });
+    h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+    h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+    assert.equal(await handleCommand(h.sock, h.msg, 'Xping', h.deps), true);
+    assert.equal(h.ran.length, 1, `owner recognised with the LID in ${label}`);
+    assert.equal(h.sent.length, 0, `no ignored notice for ${label}`);
+  }
+  resetOwnerLidCache();
+});
+
+test('a genuine non-owner LID (2347074455500) is still ignored with zero chat messages', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    text: 'Xping',
+    sender: FOREIGN,
+    key: { remoteJid: `${FOREIGN}@lid`, participant: `${FOREIGN}@lid`, participantAlt: `${FOREIGN}@s.whatsapp.net` }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  assert.equal(await handleCommand(h.sock, h.msg, 'Xping', h.deps), true);
+  assert.equal(h.ran.length, 0, 'the non-owner command never runs');
+  assert.equal(toOrigin(h, `${FOREIGN}@lid`).length, 0, 'nothing at all in the chat');
+  assert.equal(h.sent.length, 1, 'only the owner DM notice');
+  assert.equal(h.sent[0].jid, OWNER_JID);
+  resetOwnerLidCache();
+});
+
+test('the owner LID is not blocked while throttled', async () => {
+  const { noteThrottle, resetThrottle, isThrottled } = require('../src/bot');
+  resetThrottle();
+  resetOwnerLidCache();
+  noteThrottle();
+  assert.equal(isThrottled(), true, 'we really are inside the backoff window');
+
+  const h = harness({
+    text: 'Xping',
+    sender: FOREIGN,
+    key: { remoteJid: OWNER_LID_PINNED, participant: OWNER_LID_PINNED, participantAlt: `${FOREIGN}@s.whatsapp.net` }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  assert.equal(await handleCommand(h.sock, h.msg, 'Xping', h.deps), true);
+  assert.equal(h.ran.length, 1, 'the owner command runs even while throttled');
+  resetThrottle();
+  resetOwnerLidCache();
+});

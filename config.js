@@ -7,6 +7,10 @@ module.exports = {
   prefix: 'X',
   ownerName: process.env.OWNER_NAME || 'Toman',
   ownerNumbers: csv(process.env.OWNER_NUMBERS || process.env.OWNER_NUMBER),
+  // The owner's LID(s). WhatsApp addresses a LID chat by an opaque LID that carries no
+  // phone number at all, and the PN<->LID store may be cold, stale or wrong, so the
+  // owner's LID is pinned here and accepted directly without any store lookup.
+  ownerLids: csv(process.env.OWNER_LIDS),
   sudoNumbers: csv(process.env.SUDO_NUMBERS),
   botNumber: String(process.env.BOT_NUMBER || '').replace(/\D/g, ''),
   publicMode: String(process.env.MODE || 'public').toLowerCase() === 'public',

@@ -426,3 +426,79 @@ test('a failing owner DM notice never throws out of the guard', async () => {
   await assert.doesNotReject(() => handleCommand(h.sock, h.msg, 'Xping', { runCommand: async () => {} }));
   resetThrottle();
 });
+
+// --- The reported bug: the owner's LID is a different number space --------------
+// A LID-addressed message carries only the LID, so the owner's number never appears
+// in the sender fields. The owner's LID is pinned in config and accepted directly.
+
+const OWNER_LID_PINNED = `${config.ownerLids[0]}@lid`;
+const FOREIGN = '2347074455500';
+
+test('the exact reported LID key is the owner: result reaches the owner DM', async () => {
+  resetThrottle();
+  resetOwnerLidCache();
+  const h = harness({
+    text: 'Xping',
+    sender: FOREIGN,
+    key: {
+      remoteJid: OWNER_LID_PINNED,
+      participant: OWNER_LID_PINNED,
+      participantAlt: `${FOREIGN}@s.whatsapp.net`
+    }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  await handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+  });
+
+  assert.equal(h.sent.filter(s => s.jid === OWNER_LID_PINNED).length, 1, 'the reply reaches the LID chat');
+  assert.equal(toOwner(h).length, 1, 'the result is also delivered to the owner DM');
+  assert.equal(toOwner(h)[0].content.text, 'pong');
+  resetThrottle();
+  resetOwnerLidCache();
+});
+
+test('the owner LID is not blocked while throttled', async () => {
+  resetThrottle();
+  resetOwnerLidCache();
+  noteThrottle();
+  assert.equal(isThrottled(), true, 'we really are inside the backoff window');
+
+  const h = harness({
+    text: 'Xping',
+    sender: FOREIGN,
+    key: { remoteJid: OWNER_LID_PINNED, participant: OWNER_LID_PINNED, participantAlt: `${FOREIGN}@s.whatsapp.net` }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  await handleMessage(h.sock, h.msg, {
+    runCommand: async ({ sock, msg }) => { await sock.sendMessage(msg.key.remoteJid, { text: 'pong' }); }
+  });
+
+  assert.equal(h.sent.filter(s => s.jid === OWNER_LID_PINNED).length, 1, 'the owner LID is not blocked while throttled');
+  resetThrottle();
+  resetOwnerLidCache();
+});
+
+test('a genuine non-owner LID (2347074455500) still gets zero chat messages', async () => {
+  resetThrottle();
+  resetOwnerLidCache();
+  const h = harness({
+    text: 'Xping',
+    sender: FOREIGN,
+    key: { remoteJid: `${FOREIGN}@lid`, participant: `${FOREIGN}@lid`, participantAlt: `${FOREIGN}@s.whatsapp.net` }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  await handleMessage(h.sock, h.msg, { runCommand: async () => {} });
+
+  assert.equal(h.sent.filter(s => s.jid === `${FOREIGN}@lid`).length, 0, 'nothing at all in the chat');
+  assert.equal(h.sent.length, 1, 'only the owner DM notice');
+  assert.equal(h.sent[0].jid, OWNER_JID);
+  resetThrottle();
+  resetOwnerLidCache();
+});

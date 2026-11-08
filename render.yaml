@@ -11,6 +11,8 @@ services:
         value: Toman
       - key: OWNER_NUMBERS
         sync: false
+      - key: OWNER_LIDS
+        sync: false
       - key: SUDO_NUMBERS
         sync: false
       - key: DATABASE_URL

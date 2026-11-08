@@ -8,7 +8,7 @@ const {
 } = require('@whiskeysockets/baileys');
 const config = require('../config');
 const { initDb, restoreAuth, backupAuth, getSetting, clearAuth } = require('./db');
-const { textOf, parseCommand, digits, isOwner, isLidJid, senderJids, isOwnerSender, quotedMessage } = require('./utils');
+const { textOf, parseCommand, digits, isOwner, isOwnerJid, isLidJid, senderJids, isOwnerSender, quotedMessage } = require('./utils');
 const { runCommand } = require('./commands');
 const { buildWelcomeCard } = require('./welcome-card');
 
@@ -189,17 +189,22 @@ async function pnForLid(sock, jid) {
   }
 }
 
-// Resolve each owner number to its LID through the store (PN -> LID). This is the
-// authoritative direction: a LID-addressed message from the owner carries only the
-// LID, and the reverse (LID -> PN) mapping may be stale or absent, so we look the
-// owner's LID up from the number we already trust. Non-empty results are cached for
-// a few minutes so we do not hit the store (or USync) on every message; empty
-// results are not cached so a later successful lookup is not masked.
+// Resolve each owner number to its LID through the store (PN -> LID). This is only a
+// *supplement*: the authoritative source is the pinned `OWNER_LIDS` config, because a
+// LID-addressed message carries only the LID and the store may be cold, stale or
+// return a foreign mapping. Pinned LIDs are always included, so the owner passes even
+// when the store knows nothing. Non-empty results are cached for a few minutes so we
+// do not hit the store (or USync) on every message; empty results are not cached so a
+// later successful lookup is not masked.
 let ownerLidCache = { at: 0, lids: new Set() };
 const OWNER_LID_TTL_MS = 5 * 60 * 1000;
 
 async function ownerLidsFor(sock, owners) {
-  if (Date.now() - ownerLidCache.at < OWNER_LID_TTL_MS) return ownerLidCache.lids;
+  // Pinned LIDs first: they need no store and can never be stale.
+  const pinned = new Set(config.ownerLids || []);
+  if (Date.now() - ownerLidCache.at < OWNER_LID_TTL_MS) {
+    return new Set([...pinned, ...ownerLidCache.lids]);
+  }
   const lids = new Set();
   const store = sock?.signalRepository?.lidMapping;
   if (store?.getLIDForPN) {
@@ -207,32 +212,47 @@ async function ownerLidsFor(sock, owners) {
       try {
         const lid = await store.getLIDForPN(`${owner}@s.whatsapp.net`);
         if (lid) lids.add(digits(lid));
-      } catch { /* store unavailable: fall back to the other checks */ }
+      } catch { /* store unavailable: the pinned LIDs still apply */ }
     }
   }
   if (lids.size) ownerLidCache = { at: Date.now(), lids };
-  return lids;
+  return new Set([...pinned, ...lids]);
 }
 
 function resetOwnerLidCache() { ownerLidCache = { at: 0, lids: new Set() }; }
+
+// Describe every sender candidate the gate actually examined, so the diagnostic (and
+// the log) shows the real fields instead of a misleading subset. Each entry is
+// `value -> digits (kind)`, e.g. `89147029114941@lid -> 89147029114941 (lid)`.
+function describeCandidates(msg) {
+  return senderJids(msg).map(jid => {
+    const value = digits(jid);
+    const kind = isLidJid(jid) ? 'lid' : 'pn';
+    return `${jid} -> ${value || '?'} (${kind})`;
+  });
+}
 
 // True when the message was sent by a configured owner. Baileys puts the sender in
 // different key fields depending on how the message was addressed: in a PN-addressed
 // group message `participant` is the phone number and `participantAlt` is the LID,
 // while a LID-addressed message is the other way round. A LID-addressed message may
-// carry no phone number at all, so we also resolve the owner's own LID (PN -> LID)
-// and accept it, and fall back to the LID<->PN store for any LID we see.
+// carry no phone number at all, so a LID is matched against the pinned owner LIDs and
+// then, as a last resort, resolved to a PN through the LID<->PN store.
 async function isOwnerRequest(sock, msg) {
   const owners = config.ownerNumbers;
-  if (!owners.length) return false;
+  const pinnedLids = config.ownerLids || [];
+  if (!owners.length && !pinnedLids.length) return false;
+
+  // 1) Any candidate that is the owner's number, or a pinned owner LID, matches
+  //    synchronously — no store, no network, no chance of a stale mapping.
   if (isOwnerSender(msg)) return true;
 
+  // 2) A LID we do not have pinned: try the owner's LIDs from the store, then the
+  //    LID -> PN direction. Both are best-effort; a failure just means "not owner".
   const ownerLids = await ownerLidsFor(sock, owners);
   for (const jid of senderJids(msg)) {
     if (!isLidJid(jid)) continue;
-    // 1) the LID itself is one of the owner's LIDs
     if (ownerLids.has(digits(jid))) return true;
-    // 2) the LID resolves to an owner number via the store
     const pn = await pnForLid(sock, jid);
     if (pn && owners.includes(pn)) return true;
   }
@@ -296,7 +316,7 @@ async function handleVV(sock, msg, text, deps = {}) {
     // Silent in the triggering chat: no reply, no usage hint, no warning, no
     // reaction, no read-receipt change. The owner still gets the diagnostic in
     // their DM, and notifyOwner never throws, so nothing can surface here.
-    const seen = senderJids(msg).map(digits).filter(Boolean).join(', ') || 'unknown';
+    const seen = describeCandidates(msg).join(', ') || 'unknown';
     console.log(`[CUTE] Ignored non-owner request from ${seen}`);
     await notifyOwner(sock, ownerJid, `\u26a0\ufe0f Ignored *cute* from non-owner ${seen} in ${msg.key.remoteJid}.`);
     return true;
@@ -407,7 +427,7 @@ async function handleCommand(sock, msg, text, deps = {}) {
   }
 
   if (!owner) {
-    const seen = senderJids(msg).map(digits).filter(Boolean).join(', ') || 'unknown';
+    const seen = describeCandidates(msg).join(', ') || 'unknown';
     console.log(`[GUARD] Ignored non-owner *${parsed.command}* from ${seen}`);
     await notifyOwner(sock, ownerJid, `\u26a0\ufe0f Ignored *${parsed.command}* from non-owner ${seen} in ${msg.key.remoteJid}.`);
     return true;
@@ -452,6 +472,15 @@ async function handleMessage(sock, msg, deps = {}) {
   // Resolve the owner once, up front: the backoff must never block the owner, and
   // the gate below reuses this result instead of resolving the sender twice.
   const { owner, error: ownerError } = await ownerOf(sock, msg, deps);
+
+  // Diagnostic for LID-addressed messages: log the full raw key (every field) plus
+  // the resolved verdict, so the real phone-number field can be identified from the
+  // logs instead of guessed. Only for LID chats, and only one line per message.
+  if (isLidJid(msg.key?.remoteJid) || isLidJid(msg.key?.participant) || isLidJid(msg.key?.participantAlt)) {
+    try {
+      console.log(`[OWNER] LID message key=${JSON.stringify(msg.key)} candidates=[${describeCandidates(msg).join(', ')}] owner=${owner}`);
+    } catch { /* logging must never break message handling */ }
+  }
 
   // Backoff window: drop messages while throttled so we do not retry in a tight
   // loop. The owner is exempt — their commands always run, even while throttled.
@@ -594,7 +623,7 @@ function scheduleReconnect(delayMs) {
 module.exports = {
   startBot, getStatus, getConnectionInfo, requestWebPairingCode, unpairWebSession,
   handleVV, handleCommand, handleMessage, buildContext,
-  ownerOf, runWithOwnerMirror, ownerJidFor,
+  ownerOf, runWithOwnerMirror, ownerJidFor, describeCandidates, isOwnerRequest,
   isTransientError, noteThrottle, resetThrottle, isThrottled,
   resetOwnerLidCache
 };

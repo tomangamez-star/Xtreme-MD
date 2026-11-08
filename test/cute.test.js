@@ -226,3 +226,103 @@ test('owner recognised for cute when the message is LID-addressed and carries on
   assert.equal(second.content.viewOnce, undefined, 'DM copy is NOT view-once');
   resetOwnerLidCache();
 });
+
+// --- The reported bug: the owner's LID is a different number space --------------
+// The notice showed `89147029114941, 2347074455500, 89147029114941` — a LID, a
+// foreign phone number, and the LID chat. The owner's real number never appeared,
+// because a LID-addressed message carries only the LID. A LID's digits are NOT a
+// phone number, so comparing them to 2349110799878 could never match. The owner's
+// LID is now pinned in config (OWNER_LIDS) and accepted directly.
+
+const OWNER_LID_PINNED = `${config.ownerLids[0]}@lid`;
+const FOREIGN = '2347074455500';
+
+test('the exact reported key (LID chat + foreign participantAlt) is the owner', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    quoted: viewOnceImage,
+    sender: FOREIGN,
+    key: {
+      remoteJid: OWNER_LID_PINNED,
+      participant: OWNER_LID_PINNED,
+      participantAlt: `${FOREIGN}@s.whatsapp.net`
+    }
+  });
+  // The store knows nothing at all: the pinned LID must be enough on its own.
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  assert.equal(await handleVV(h.sock, h.msg, 'cute', deps), true);
+
+  assert.equal(h.sent.length, 2, 'owner gets exactly two sends');
+  assert.equal(h.sent[0].jid, OWNER_LID_PINNED, 'view-once goes to the LID chat');
+  assert.equal(h.sent[0].content.viewOnce, true, 'first send is view-once');
+  assert.equal(h.sent[1].jid, OWNER_JID, 'normal copy goes to the owner DM');
+  assert.equal(h.sent[1].content.viewOnce, undefined, 'DM copy is NOT view-once');
+  resetOwnerLidCache();
+});
+
+test('the owner LID is recognised with a device suffix', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    quoted: viewOnceImage,
+    sender: FOREIGN,
+    key: { participant: `${config.ownerLids[0]}:12@lid`, participantAlt: `${FOREIGN}@s.whatsapp.net` }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  assert.equal(await handleVV(h.sock, h.msg, 'cute', deps), true);
+  assert.equal(h.sent.length, 2, 'owner gets exactly two sends');
+  resetOwnerLidCache();
+});
+
+test('the owner LID is recognised when it only appears in participantAlt', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    quoted: viewOnceImage,
+    sender: FOREIGN,
+    key: { participant: `${FOREIGN}@s.whatsapp.net`, participantAlt: OWNER_LID_PINNED }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  assert.equal(await handleVV(h.sock, h.msg, 'cute', deps), true);
+  assert.equal(h.sent.length, 2, 'owner gets exactly two sends');
+  resetOwnerLidCache();
+});
+
+test('a genuine non-owner LID (2347074455500) still gets nothing in the chat', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    quoted: viewOnceImage,
+    sender: FOREIGN,
+    key: { remoteJid: `${FOREIGN}@lid`, participant: `${FOREIGN}@lid`, participantAlt: `${FOREIGN}@s.whatsapp.net` }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  assert.equal(await handleVV(h.sock, h.msg, 'cute', deps), true);
+  assert.equal(toOrigin(h, `${FOREIGN}@lid`).length, 0, 'nothing at all in the chat');
+  assert.equal(h.sent.length, 1, 'only the owner DM notice');
+  assert.equal(h.sent[0].jid, OWNER_JID);
+  resetOwnerLidCache();
+});
+
+test('the ignored notice lists every candidate actually checked', async () => {
+  resetOwnerLidCache();
+  const h = harness({
+    quoted: viewOnceImage,
+    sender: FOREIGN,
+    key: { remoteJid: `${FOREIGN}@lid`, participant: `${FOREIGN}@lid`, participantAlt: `${FOREIGN}@s.whatsapp.net` }
+  });
+  h.sock.signalRepository.lidMapping.getPNForLID = async () => null;
+  h.sock.signalRepository.lidMapping.getLIDForPN = async () => null;
+
+  await handleVV(h.sock, h.msg, 'cute', deps);
+  const notice = h.sent[0].content.text;
+  assert.match(notice, /\(lid\)/, 'the notice marks LID candidates');
+  assert.match(notice, /\(pn\)/, 'the notice marks phone-number candidates');
+  assert.match(notice, new RegExp(FOREIGN), 'the real candidate value is shown');
+  resetOwnerLidCache();
+});
